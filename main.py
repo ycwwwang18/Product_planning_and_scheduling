@@ -171,8 +171,8 @@ def GAv20221115Execute():
             offspring_population = np.vstack((crossover_population, mutation_population))
             if isinstance(best_chromosome, np.ndarray):
                 population = np.vstack((offspring_population, best_chromosome))
-            else: population = offspring_population
-            # population = np.vstack((population, offspring_population))
+            else:
+                population = offspring_population
 
             ####################种群适应度计算####################
             print("解码多进程开始进行：")
@@ -182,17 +182,15 @@ def GAv20221115Execute():
             fitness_array = np.array(decode_results[2])  # 把适应度list转化为array
 
             ####################保存种群最优个体###################
-            best_index, best_objective_value, _, best_end, _ = ga.getBestChromosome(decode_results[0],
-                                                                                    decode_results[1],
-                                                                                    fitness_array, decode_results[3])
-            best_chromosome = population[best_index]
+            best_chromosome, best_objective_value, best_end, _ = ga.getBestChromosome(population, decode_results[1],
+                                                                                      fitness_array, decode_results[3], 4)
             # 记录本代的最优目标值
-            fitness_evolution.append(best_objective_value)
-            best_chromosome = np.array([best_chromosome])  # 用于最优个体的保存到下一代
-            print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (iterate_count, best_objective_value, best_end))
+            fitness_evolution.append(best_objective_value[0])
+            print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (iterate_count, best_objective_value[0], best_end[0]))
 
             ########################结束判断#######################
             def isStop():
+
                 nonlocal iterate_flag, another_execute
 
                 if iterate_count_all > ga.evolution_num:
@@ -206,11 +204,11 @@ def GAv20221115Execute():
                     best_obj_4 = fitness_evolution[iterate_count_all - 5]
                     best_obj_5 = fitness_evolution[iterate_count_all - 6]
                     # 计算此代的最优值与前5代最优值之间的平方差
-                    MSE = pow(best_objective_value - best_obj_1, 2) + \
-                          pow(best_objective_value - best_obj_2, 2) + \
-                          pow(best_objective_value - best_obj_3, 2) + \
-                          pow(best_objective_value - best_obj_4, 2) + \
-                          pow(best_objective_value - best_obj_5, 2)
+                    MSE = pow(best_objective_value[0] - best_obj_1, 2) + \
+                          pow(best_objective_value[0] - best_obj_2, 2) + \
+                          pow(best_objective_value[0] - best_obj_3, 2) + \
+                          pow(best_objective_value[0] - best_obj_4, 2) + \
+                          pow(best_objective_value[0] - best_obj_5, 2)
                     if MSE < 0.05:  # 最优值6代内不再变化
                         print("最优值6代内不再变化，终止本次GA运行，开启一次新的GA运行。")
                         iterate_flag = False
@@ -218,7 +216,8 @@ def GAv20221115Execute():
 
                 # 通过外界输入来控制进程
                 if iterate_count_all > 25:
-                    key_board_input = input("按Enter结束GA运行，输出最终结果；按c终止本次GA运行，开启新一次的GA运行；否则继续运行：")
+                    key_board_input = input(
+                        "按Enter结束GA运行，输出最终结果；按c终止本次GA运行，开启新一次的GA运行；否则继续运行：")
                     if key_board_input == '':
                         print("结束GA运行，输出最终结果。")
                         iterate_flag = False
@@ -227,7 +226,8 @@ def GAv20221115Execute():
                         print(f"终止第{execute_count}次GA运行，开启下一次GA运行。")
                         iterate_flag = False
                         another_execute = True
-                    else: print(f"继续本次的GA运行，进入第{iterate_count+1}次迭代进化。")
+                    else:
+                        print(f"继续本次的GA运行，进入第{iterate_count + 1}次迭代进化。")
 
             iterate_count += 1
             iterate_count_all += 1
@@ -240,10 +240,10 @@ def GAv20221115Execute():
             _, schedule_df, _ = ga.decodeChromosome(best_chromosome[0])
             project_end_time = schedule_df['End Time'].max()
 
-            ga.resultExport(schedule_df, fitness_evolution, best_objective_value, project_end_time)
+            ga.resultExport(schedule_df, fitness_evolution, best_objective_value[0], project_end_time)
             print(
                 "-----------------------------------------------------------------------------------------------------------")
-            print("最好目标值为：" + str(best_objective_value))
+            print("最好目标值为：" + str(best_objective_value[0]))
             print("完工时间为：" + str(project_end_time))
 
         execute_count += 1
@@ -258,12 +258,12 @@ def run():
 
     if algorithm == "GA":
         objective = 2
-        population_size = 10
+        population_size = 100
         crossover_rate = 0.8
         mutation_rate = 0.1
         select_rate = 0.8
         mutation_change_point = 30
-        evolution_num = 1
+        evolution_num = 100
         dataPrepare(order_name, order_time, strategy, objective, population_size, crossover_rate,
                     mutation_rate, select_rate, evolution_num, mutation_change_point)
         GAv20221115Execute()

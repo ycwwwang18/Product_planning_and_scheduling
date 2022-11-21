@@ -35,10 +35,6 @@ class GA:
         :param select_rate: 种群选择的比例
         :param evolution_num: 进化次数
         """
-        abs_path = os.path.abspath(__file__)
-        _, filename = os.path.split(abs_path)
-        filename = filename[:-3]
-        self.file_name = filename + f"Strategy{strategy}Obj{objective}"
 
         self.population_size = population_size  # 种群规模
         self.crossover_rate = crossover_rate  # 交叉概率
@@ -59,6 +55,11 @@ class GA:
             self.order_batches = data.order_batches  # 批量订单集合
             self.chromosome_size = data.chromosome_size  # 染色体长度
             self.procedure_num = data.procedure_num  # 各任务的工序数量，list
+
+        abs_path = os.path.abspath(__file__)
+        _, filename = os.path.split(abs_path)
+        filename = filename[:-3]
+        self.file_name = filename + f"Strategy{strategy}Obj{objective}PopulationSize{population_size}CR{crossover_rate}MR{mutation_rate}SR{select_rate}MCP{mutation_change_point}EvolutionNum{evolution_num}"
 
     '''种群初始化'''
 
@@ -100,6 +101,7 @@ class GA:
         end_time_list = []
         machine_list = []
         machine_status_list = []
+        procedure_list = []
         category_id_list = []
         order_id_list = []
         product_id_list = []
@@ -108,15 +110,17 @@ class GA:
         this_job = self.jobs.loc[job_id]
         this_machine = self.machines.loc[machine_id]
         order_batch = self.order_batches.loc[job_id]
+        this_procedure = this_machine.procedure
         maintenance_day0 = this_machine.maintenance_day[0]  # 机器当月的维修日期
         maintenance_day1 = this_machine.maintenance_day[1]  # 机器下月的维修日期
 
-        def linesAppend(machine, status, start_time, end_time, category_ID, order_ID, product_ID, num_index):
+        def linesAppend(status, start_time, end_time, category_ID, order_ID, product_ID, num_index):
             """往结果中增添一行"""
             start_time_list.append(start_time)
             end_time_list.append(end_time)
-            machine_list.append(machine)
+            machine_list.append(machine_id)
             machine_status_list.append(status)
+            procedure_list.append(this_procedure)
             category_id_list.append(category_ID)
             order_id_list.append(order_ID)
             product_id_list.append(product_ID)
@@ -195,7 +199,7 @@ class GA:
                             "val": [10]
                         }
                         result[machine_id - 1]["data"].append(job_segment_idle)
-                        linesAppend(machine_id, '空转', duration_start_time, duration_end_time, '空转', '', '', '')
+                        linesAppend('空转', duration_start_time, duration_end_time, '空转', '', '', '')
 
                     # 保存机器停机维修保养的时间段
                     if flag_maintenance == 1:
@@ -205,7 +209,7 @@ class GA:
                             "val": [1]
                         }
                         result[machine_id - 1]["data"].append(job_segment_maintenance)
-                        linesAppend(machine_id, '维保', maintenance_start_time, maintenance_end_time, '维保', '', '',
+                        linesAppend('维保', maintenance_start_time, maintenance_end_time, '维保', '', '',
                                     '')
 
                     # 保存机器停机的时间段
@@ -216,7 +220,7 @@ class GA:
                             "val": [0]
                         }
                         result[machine_id - 1]["data"].append(job_segment_shutdown)
-                        linesAppend(machine_id, '停机', duration_start_time, duration_end_time, '停机', '', '', '')
+                        linesAppend('停机', duration_start_time, duration_end_time, '停机', '', '', '')
 
                     # 保存机器生产的任务段
                     job_segment = {
@@ -225,17 +229,17 @@ class GA:
                         "val": [20, order_id, product_id, item_num]
                     }
                     result[machine_id - 1]["data"].append(job_segment)
-                    linesAppend(machine_id, '生产', item_start_time, item_end_time, job_id, order_id, product_id, num)
+                    linesAppend('生产', item_start_time, item_end_time, job_id, order_id, product_id, num)
 
                     this_machine.latest_end_time = item_end_time
                     this_job.latest_end_time = item_end_time
             model_index += 1
 
         result_df = pd.DataFrame(list(
-            zip(machine_list, start_time_list, end_time_list, machine_status_list, category_id_list, order_id_list,
+            zip(machine_list, start_time_list, end_time_list, machine_status_list, procedure_list, category_id_list, order_id_list,
                 product_id_list,
                 num_list)))
-        result_df.columns = ['Machine', 'Start Time', 'End Time', 'Machine Status', 'Category ID', 'Order ID',
+        result_df.columns = ['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID', 'Order ID',
                              'Product ID', '#']
         return result, result_df
 
@@ -245,7 +249,7 @@ class GA:
         # 数据准备
         result_schedule = []  # 调度表
         schedule_df = pd.DataFrame(
-            columns=['Machine', 'Start Time', 'End Time', 'Machine Status', 'Category ID', 'Order ID', 'Product ID',
+            columns=['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID', 'Order ID', 'Product ID',
                      '#'])  # dataframe格式的结果
         for i in range(self.machine_num):
             shop = {
@@ -305,16 +309,18 @@ class GA:
         return project_start_time_list, project_end_time_list, fitness_array, schedule_list
 
     @staticmethod
-    def getBestChromosome(project_start_time_list, project_end_time_list, fitness_array, schedule_list):
-        """获取种群中的最好个体，返回最优个体和最优目标值"""
-        best_fitness = np.max(fitness_array)
-        best_index = np.argmax(fitness_array)
-        best_objective_value = 1 / best_fitness
-        best_start_time = project_start_time_list[best_index]
-        best_end_time = project_end_time_list[best_index]
-        best_schedule = schedule_list[best_index]
+    def getBestChromosome(population, project_end_time_list, fitness_array, schedule_list, best_num):
+        """获取种群中若干个的最好个体，最优目标值，最优结束时间和最优调度表"""
+        sort_index = np.argsort(-fitness_array)
+        best_chromosomes = population[sort_index][:best_num]
+        best_objective_value = 1 / fitness_array[sort_index][:best_num]
+        best_end_time = np.array(project_end_time_list)[sort_index][:best_num]
+        # best_schedule = schedule_list[sort_index][:best_num]
+        best_schedule = []
+        for index in sort_index[:best_num]:
+            best_schedule.append(schedule_list[index])
 
-        return best_index, best_objective_value, best_start_time, best_end_time, best_schedule
+        return best_chromosomes, best_objective_value, best_end_time, best_schedule
 
     '''约束条件检查'''
 
@@ -424,11 +430,9 @@ class GA:
                 offsprings[index] = offspring
             offsprings = self.populationCorrecting(offsprings)
             project_start_time_list, project_end_time_list, fitness_array, schedule_list = self.getFitness(offsprings)
-            best_index, _, _, _, _ = self.getBestChromosome(project_start_time_list, project_end_time_list,
-                                                            fitness_array, schedule_list)
-            best_offspring = offsprings[best_index]
-            best_offspring = np.array([best_offspring])
-            return best_offspring
+            best_chromosome, _, _, _ = self.getBestChromosome(offsprings, project_end_time_list,
+                                                              fitness_array, schedule_list, 1)
+            return best_chromosome
 
     def mutation(self, population, iterate_num):
         """种群变异"""
@@ -460,18 +464,14 @@ class GA:
     '''结果输出'''
 
     def resultExport(self, schedule, fitness, obj_val, end):
-        obj_val = int(obj_val)
-        end = end.strftime('%Y%m%d%H%M')
-        file_name = self.file_name + f"ObjVal{obj_val}End{end}"
-
         def exportSchedule():
             """调度表"""
-            schedule_path = "调度表" + file_name + ".xlsx"
-            schedule.to_excel(schedule_path)
+            schedule_path = "调度表.xlsx"
+            schedule.to_excel(result_folder_path + '\\' + schedule_path)
 
         def plotFitnessEvolution():
             """目标值迭代曲线"""
-            evolution_name = "进化" + file_name
+            evolution_path = "进化.png"
             y_value = fitness
             len_y = len(y_value)
             x_value = [i for i in range(1, len_y + 1)]
@@ -485,22 +485,20 @@ class GA:
             plt.ylabel(u"目标值")
             plt.title("目标值迭代曲线")
             # 先保存再show，否则保存的图片可能是空白的
-            plt.savefig(fname=evolution_name)  # 算法、策略
+            plt.savefig(result_folder_path + '\\' + evolution_path)  # 算法、策略
             plt.show()
 
         def plotGantt():
             """甘特图"""
-            gantt_png_path = "甘特" + file_name + ".png"
-            gantt_html_path = "甘特" + file_name + ".html"
+            gantt_png_path = "甘特.png"
+            gantt_html_path = "甘特.html"
 
             # 对schedule进行调整
             schedule_reformat = schedule[
                 (schedule['Machine Status'] == '生产') | (schedule['Machine Status'] == '空转')]
-            # schedule_reformat.loc[:, 'Machine'] = schedule_reformat.Machine.map(lambda machineid: "M" + str(machineid))
-            # schedule_reformat = schedule_reformat.sort_values(by='Machine', axis=0, ascending=True, inplace=False)
             machine_list = schedule_reformat.Machine.unique()
             machine_list = np.sort(machine_list)
-            machine_name_list = list(map(lambda x: 'M'+str(x), machine_list))
+            machine_name_list = list(map(lambda x: 'M' + str(x), machine_list))
             schedule_reformat.loc[:, 'Machine'] = schedule_reformat.Machine.map(lambda machineid: "M" + str(machineid))
             fig = px.timeline(schedule_reformat, x_start='Start Time', x_end='End Time', y='Machine',
                               color='Category ID',
@@ -510,13 +508,34 @@ class GA:
                               category_orders={'Machine': machine_name_list,
                                                'Category ID': [1, 2, 3, 4, 5, 6, 7, 8, '空转']})
             fig.update_yaxes(showgrid=True, griddash='dash')
-            fig.write_image(gantt_png_path, width=7000, height=4000)
-            plotly.offline.plot(fig, filename=gantt_html_path)
+            fig.add_annotation(text=f'目标值：{obj_val} <br>完工时间：{end}',
+                               align='left',
+                               showarrow=False,
+                               xref='paper',
+                               yref='paper',
+                               x=1,
+                               xanchor='right',
+                               y=1,
+                               yanchor='top',
+                               bgcolor='white')
+            fig.write_image(result_folder_path + '\\' + gantt_png_path, width=2000, height=1000)
+            plotly.offline.plot(fig, filename=result_folder_path + '\\' + gantt_html_path)
             fig.show()
 
-        exportSchedule()
-        plotFitnessEvolution()
-        plotGantt()
+        obj_val = int(obj_val)
+        end = end.strftime('%Y-%m-%d %H:%M')
+        folder_path = "C:\\Users\\ejauxue002\\Nutstore\\1\\Q2\\排程优化-20221010\\实验结果记录"
+        result_folder_path = folder_path + '\\' + self.file_name
+        if os.path.exists(folder_path):
+            try:
+                os.mkdir(result_folder_path)
+            except FileExistsError:
+                while os.path.exists(result_folder_path):
+                    result_folder_path = result_folder_path+'_1'
+                os.mkdir(result_folder_path)
+            exportSchedule()
+            plotFitnessEvolution()
+            plotGantt()
 
     @staticmethod
     def decodeChildTask(ga_data, chromosome):
@@ -554,8 +573,7 @@ class GA:
             offsprings = ga_data.populationCorrecting(offsprings)
             project_start_time_list, project_end_time_list, fitness_array, schedule_list = ga_data.getFitness(
                 offsprings)
-            best_index, _, _, _, _ = ga_data.getBestChromosome(project_start_time_list, project_end_time_list,
-                                                               fitness_array, schedule_list)
-            best_offspring = offsprings[best_index]
-            best_offspring = np.array([best_offspring])
-            return best_offspring
+            best_chromosome, _, _, _ = ga_data.getBestChromosome(offsprings, project_end_time_list,
+                                                                 fitness_array, schedule_list, 1)
+
+            return best_chromosome
