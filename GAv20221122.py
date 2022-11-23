@@ -2,7 +2,10 @@ import os
 import json
 import sys
 
+import numpy as np
+
 from datav20221110 import *
+from multiprocess import *
 from pylab import *
 from copy import deepcopy
 import plotly.offline
@@ -12,18 +15,11 @@ from itertools import permutations
 
 mpl.rcParams['font.sans-serif'] = ['SimHei']
 
-"""
-更新记录：
-1、选择：select_rate的自适应。随着进化代数的增加，原种群的比例逐渐减少，增加随机生成解的比例，提高解的多样性，跳出局部最优。
-2、变异算子：降低R的上界，增加片段内的变异次数，提高局部搜索能力。设计两种变异算子，随着迭代的进行，从全排列算子转变为随机排列算子。
-3、增加了结束的判断函数。
-"""
-
 
 class GA:
     """遗传算法类"""
 
-    def __init__(self, data, strategy, objective, population_size, crossover_rate, mutation_rate, select_rate,
+    def __init__(self, data, strategy, objective, population_size, crossover_rate, mutation_rate, select_rate, best_keep_num,
                  evolution_num, mutation_change_point):
         """
         :param data: 传入遗传算法的对应数据类GAData
@@ -40,6 +36,7 @@ class GA:
         self.crossover_rate = crossover_rate  # 交叉概率
         self.mutation_rate = mutation_rate  # 变异概率
         self.select_rate = select_rate  # 选择比例
+        self.best_keep_num = best_keep_num  # 最优保留的数量
         self.mutation_change_point = mutation_change_point
         self.evolution_num = evolution_num  # 进化次数
         self.objective = objective  # 优化目标
@@ -236,10 +233,12 @@ class GA:
             model_index += 1
 
         result_df = pd.DataFrame(list(
-            zip(machine_list, start_time_list, end_time_list, machine_status_list, procedure_list, category_id_list, order_id_list,
+            zip(machine_list, start_time_list, end_time_list, machine_status_list, procedure_list, category_id_list,
+                order_id_list,
                 product_id_list,
                 num_list)))
-        result_df.columns = ['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID', 'Order ID',
+        result_df.columns = ['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID',
+                             'Order ID',
                              'Product ID', '#']
         return result, result_df
 
@@ -249,7 +248,8 @@ class GA:
         # 数据准备
         result_schedule = []  # 调度表
         schedule_df = pd.DataFrame(
-            columns=['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID', 'Order ID', 'Product ID',
+            columns=['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID', 'Order ID',
+                     'Product ID',
                      '#'])  # dataframe格式的结果
         for i in range(self.machine_num):
             shop = {
@@ -308,21 +308,15 @@ class GA:
         fitness_array = np.array(fitness_list)
         return project_start_time_list, project_end_time_list, fitness_array, schedule_list
 
-    def getBestChromosome(self, population, project_end_time_list, fitness_array, schedule_list, best_rate):
+    @staticmethod
+    def getBestChromosome(population, fitness_array, project_end_time_list, best_num):
         """获取种群中若干个的最好个体，最优目标值，最优结束时间和最优调度表"""
-        if best_rate < 1:
-            best_num = int(best_rate*self.population_size)
-        else: best_num = best_rate
         sort_index = np.argsort(-fitness_array)
         best_chromosomes = population[sort_index][:best_num]
-        best_objective_value = 1 / fitness_array[sort_index][:best_num]
+        best_objective_value = np.reciprocal(fitness_array[sort_index][:best_num])
         best_end_time = np.array(project_end_time_list)[sort_index][:best_num]
-        # best_schedule = schedule_list[sort_index][:best_num]
-        best_schedule = []
-        for index in sort_index[:best_num]:
-            best_schedule.append(schedule_list[index])
 
-        return best_chromosomes, best_objective_value, best_end_time, best_schedule
+        return best_chromosomes, best_objective_value, best_end_time
 
     '''约束条件检查'''
 
@@ -432,8 +426,7 @@ class GA:
                 offsprings[index] = offspring
             offsprings = self.populationCorrecting(offsprings)
             project_start_time_list, project_end_time_list, fitness_array, schedule_list = self.getFitness(offsprings)
-            best_chromosome, _, _, _ = self.getBestChromosome(offsprings, project_end_time_list,
-                                                              fitness_array, schedule_list, 1)
+            best_chromosome, _, _ = self.getBestChromosome(offsprings, fitness_array, project_end_time_list, 1)
             return best_chromosome
 
     def mutation(self, population, iterate_num):
@@ -454,11 +447,11 @@ class GA:
 
     '''选择'''
 
-    def select(self, population, best_chromosome, fitness_array):
+    def select(self, offspring_population, best_chromosome, fitness_array, select_rate):
         """选择用于交叉变异的个体"""
         sort_index = np.argsort(-fitness_array)
-        select_num = int(self.population_size * self.select_rate)
-        select_population = population[sort_index][:select_num]
+        select_num = int((self.population_size-self.best_keep_num) * select_rate)
+        select_population = offspring_population[sort_index][:select_num]
         new_num = self.population_size - select_num - len(best_chromosome)
         new_population = self.initialPopulation(new_num)
         return np.vstack((select_population, best_chromosome, new_population))
@@ -533,49 +526,179 @@ class GA:
                 os.mkdir(result_folder_path)
             except FileExistsError:
                 while os.path.exists(result_folder_path):
-                    result_folder_path = result_folder_path+'_1'
+                    result_folder_path = result_folder_path + '_1'
                 os.mkdir(result_folder_path)
             exportSchedule()
             plotFitnessEvolution()
             plotGantt()
 
-    @staticmethod
-    def decodeChildTask(ga_data, chromosome):
+    '''多进程'''
+
+    def decodeChildTask(self, chromosome):
         """用于多进程解码的实现，个体的解码函数"""
         print("\033[1;32m", "█", "\033[0m", sep="", end="")
-        if ga_data.objective == 2:
-            _, schedule_dataframe, machine_first_start_time = ga_data.decodeChromosome(chromosome)
+        if self.objective == 2:
+            _, schedule_dataframe, machine_first_start_time = self.decodeChromosome(chromosome)
             project_start_time = schedule_dataframe['Start Time'].min()
             project_end_time = schedule_dataframe['End Time'].max()
-            objective_value = ga_data.cal.getEnergyCost(schedule_dataframe, machine_first_start_time)
+            objective_value = self.cal.getEnergyCost(schedule_dataframe, machine_first_start_time)
             return project_start_time, project_end_time, 1 / objective_value, schedule_dataframe
         time.sleep(0.01)
 
-    @staticmethod
-    def mutationChildTask(ga_data, population, iterate_num):
+    def multiprocessDecode(self, population, iterate_count):
+        """多进程解码"""
+        print("解码多进程开始进行：")
+        decode_multiprocess = Multiprocess()
+        decode_args = zip(population)
+        decode_results = decode_multiprocess.work(self.decodeChildTask, decode_args, iterate_count)
+        fitness_array = np.array(decode_results[2])  # 把适应度list转化为array
+        return decode_results[1], fitness_array, decode_results[3]
+
+    def mutationChildTask(self, population, iterate_num):
         """用于多进程变异的实现，种群变异函数"""
         print("\033[1;32m", "█", "\033[0m", sep="", end="")
         random_parent_index = np.random.randint(0, len(population))  # 随机抽取一个个体
         R = np.random.randint(1, 4)  # 修改了这个, 不超过3
-        random_point = np.random.randint(0, ga_data.chromosome_size - R + 1)  # 随机选取一个变异片段的端点
+        random_point = np.random.randint(0, self.chromosome_size - R + 1)  # 随机选取一个变异片段的端点
         offspring = deepcopy(population[random_parent_index])
-        if iterate_num > ga_data.mutation_change_point:
+        if iterate_num > self.mutation_change_point:
             """对随机选取的片段进行打乱顺序"""
             np.random.shuffle(offspring[random_point:random_point + R])
             offspring = np.array([offspring])
-            offspring = ga_data.populationCorrecting(offspring)
+            offspring = self.populationCorrecting(offspring)
             return offspring
         else:
             """对随机选取的片段进行全排列"""
             parent = deepcopy(population[random_parent_index])
-            offsprings = np.empty(shape=(math.factorial(R), ga_data.chromosome_size, 2)).astype(int)  # 用于存储变异得到的所有子代
+            offsprings = np.empty(shape=(math.factorial(R), self.chromosome_size, 2)).astype(int)  # 用于存储变异得到的所有子代
             for index, element in enumerate(permutations(parent[random_point:random_point + R])):
                 offspring[random_point:random_point + R] = list(element)
                 offsprings[index] = offspring
-            offsprings = ga_data.populationCorrecting(offsprings)
-            project_start_time_list, project_end_time_list, fitness_array, schedule_list = ga_data.getFitness(
+            offsprings = self.populationCorrecting(offsprings)
+            project_start_time_list, project_end_time_list, fitness_array, schedule_list = self.getFitness(
                 offsprings)
-            best_chromosome, _, _, _ = ga_data.getBestChromosome(offsprings, project_end_time_list,
-                                                                 fitness_array, schedule_list, 1)
+            best_chromosome, _, _ = self.getBestChromosome(offsprings, fitness_array, project_end_time_list, 1)
 
             return best_chromosome
+
+    def multiprocessMutation(self, population, iterate_count):
+        print("变异多进程开始进行：")
+        mutation_num = int(self.mutation_rate * self.population_size)
+        mutation_multiprocess = Multiprocess()
+        mutation_args = zip([population] * mutation_num, [iterate_count] * mutation_num)
+        mutation_results = mutation_multiprocess.work(self.mutationChildTask, mutation_args, iterate_count)
+        mutation_population = np.array(mutation_results[0])
+        return mutation_population
+
+    def execute(self):
+        """执行GA"""
+        fitness_evolution = []  # 记录每一代的最优目标值
+        best_objective_value = 0  # 记录当前的最优目标值
+        execute_flag = True
+        execute_count = 1
+        iterate_count_all = 1  # 记录总的迭代次数
+
+        #############初始化种群############
+        # global population
+        while execute_flag:
+            another_execute = False
+            iterate_flag = True
+            iterate_count = 0
+
+            ##############生成初始种群#############
+            population = self.initialPopulation(self.population_size)
+            project_end_time, fitness_array, _ = self.multiprocessDecode(population, iterate_count)
+            best_chromosome, best_objective_value, best_end = self.getBestChromosome(population, fitness_array,
+                                                                                     project_end_time, self.best_keep_num)
+            print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (iterate_count, best_objective_value[0], best_end[0]))
+            iterate_count += 1
+
+            #############进行若干次进化#############
+            while iterate_flag:  # 进化次数
+                print(
+                    f"----------------------------------------------第{execute_count}次执行GA，第{iterate_count}代----------------------------------------------")
+
+                select_rate = self.select_rate - (iterate_count_all - 1) / 4 / self.evolution_num
+
+                ######################交叉和变异#####################
+                crossover_population = self.crossOver(population)
+                mutation_population = self.multiprocessMutation(population, iterate_count)
+                offspring_population = np.vstack((crossover_population, mutation_population))
+
+                ####################种群适应度计算####################
+                project_end_time, fitness_array, _ = self.multiprocessDecode(offspring_population, iterate_count)
+
+                ####################更新种群优秀个体###################
+                best_chromosome, best_objective_value, best_end = self.getBestChromosome(
+                    np.vstack((offspring_population, best_chromosome)),
+                    np.append(fitness_array, 1/best_objective_value, axis=0),
+                    np.append(project_end_time, best_end, axis=0),
+                    self.best_keep_num)
+                # 记录本代的最优目标值
+                fitness_evolution.append(best_objective_value[0])
+                print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (
+                    iterate_count, best_objective_value[0], best_end[0]))
+
+                ##################选择种群中的优质个体#################
+                population = self.select(offspring_population, best_chromosome, fitness_array, select_rate)
+
+                ########################结束判断#######################
+                def isStop():
+
+                    nonlocal iterate_flag, another_execute
+
+                    if iterate_count_all > self.evolution_num:
+                        print(f"迭代进化次数超过{self.evolution_num}，结束GA运行，输出最终结果。")
+                        iterate_flag = False
+                        another_execute = False
+                    elif iterate_count_all > 6:
+                        best_obj_1 = fitness_evolution[iterate_count_all - 2]
+                        best_obj_2 = fitness_evolution[iterate_count_all - 3]
+                        best_obj_3 = fitness_evolution[iterate_count_all - 4]
+                        best_obj_4 = fitness_evolution[iterate_count_all - 5]
+                        best_obj_5 = fitness_evolution[iterate_count_all - 6]
+                        # 计算此代的最优值与前5代最优值之间的平方差
+                        MSE = pow(best_objective_value[0] - best_obj_1, 2) + \
+                              pow(best_objective_value[0] - best_obj_2, 2) + \
+                              pow(best_objective_value[0] - best_obj_3, 2) + \
+                              pow(best_objective_value[0] - best_obj_4, 2) + \
+                              pow(best_objective_value[0] - best_obj_5, 2)
+                        if MSE < 0.05:  # 最优值6代内不再变化
+                            print("最优值6代内不再变化，终止本次GA运行，开启一次新的GA运行。")
+                            iterate_flag = False
+                            another_execute = True
+
+                    # 通过外界输入来控制进程
+                    if iterate_count_all > 25:
+                        key_board_input = input(
+                            "按Enter结束GA运行，输出最终结果；按c终止本次GA运行，开启新一次的GA运行；否则继续运行：")
+                        if key_board_input == '':
+                            print("结束GA运行，输出最终结果。")
+                            iterate_flag = False
+                            another_execute = False
+                        elif key_board_input == 'c':
+                            print(f"终止第{execute_count}次GA运行，开启下一次GA运行。")
+                            iterate_flag = False
+                            another_execute = True
+                        else:
+                            print(f"继续本次的GA运行，进入第{iterate_count + 1}次迭代进化。")
+                iterate_count += 1
+                iterate_count_all += 1
+                isStop()
+
+            execute_flag = another_execute
+
+            if not another_execute:
+                """结果输出"""
+                _, schedule_df, _ = self.decodeChromosome(best_chromosome[0])
+                project_end_time = schedule_df['End Time'].max()
+
+                self.resultExport(schedule_df, fitness_evolution, best_objective_value[0], project_end_time)
+                print(
+                    "-----------------------------------------------------------------------------------------------------------")
+                print("最好目标值为：" + str(best_objective_value[0]))
+                print("完工时间为：" + str(project_end_time))
+
+            execute_count += 1
+
+# if __name__=='__main__':
