@@ -1,0 +1,45 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPep8Inspection" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <option name="ignoredErrors">
+        <list>
+          <option value="E265" />
+          <option value="E501" />
+          <option value="E221" />
+          <option value="E127" />
+          <option value="E701" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyPep8NamingInspection" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <option name="ignoredErrors">
+        <list>
+          <option value="N802" />
+          <option value="N806" />
+          <option value="N803" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredIdentifiers">
+        <list>
+          <option value="object.machine_energy_consumption" />
+          <option value="object.category_to_model" />
+          <option value="object.procedure_of_category" />
+          <option value="object.machine_of_category" />
+          <option value="object.machine_information" />
+          <option value="object.processing_time" />
+          <option value="object.order_table" />
+          <option value="object.lead_time" />
+          <option value="object.energy_price" />
+          <option value="object.machine_num" />
+          <option value="object.startup_energy_consumption" />
+          <option value="object.procedure_num_of_category" />
+          <option value="object.machine_list" />
+          <option value="object.order_earliest_start_time" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

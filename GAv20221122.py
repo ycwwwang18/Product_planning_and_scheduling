@@ -530,6 +530,7 @@ class GA:
                 (schedule['Machine Status'] == '生产') | (schedule['Machine Status'] == '空转')]
             machine_list = schedule_reformat.Machine.unique()
             machine_list = np.sort(machine_list)
+            machine_list = machine_list[::-1]  # 转为降序
             machine_name_list = list(map(lambda x: 'M' + str(x), machine_list))
             schedule_reformat.loc[:, 'Machine'] = schedule_reformat.Machine.map(lambda machineid: "M" + str(machineid))
             fig = px.timeline(schedule_reformat, x_start='Start Time', x_end='End Time', y='Machine',
@@ -540,7 +541,7 @@ class GA:
                               category_orders={'Machine': machine_name_list,
                                                'Category ID': [1, 2, 3, 4, 5, 6, 7, 8, '空转']})
             fig.update_yaxes(showgrid=True, griddash='dash')
-            fig.add_annotation(text=f'目标值：{obj_val} <br>完工时间：{end}',
+            fig.add_annotation(text=f'目标值：{obj_val}，完工时间：{end}',
                                align='left',
                                showarrow=False,
                                xref='paper',
@@ -548,7 +549,7 @@ class GA:
                                x=1,
                                xanchor='right',
                                y=1,
-                               yanchor='top',
+                               yanchor='bottom',
                                bgcolor='white')
             fig.write_image(result_folder_path + '\\' + gantt_png_path, width=2000, height=1000)
             plotly.offline.plot(fig, filename=result_folder_path + '\\' + gantt_html_path)
@@ -737,7 +738,7 @@ class GA:
 
             if not another_execute:
                 """结果输出"""
-                _, schedule_df, _, _ = self.decodeChromosome(best_chromosome[0])
+                _, _, schedule_df, _ = self.decodeChromosome(best_chromosome[0])
                 project_end_time = schedule_df['End Time'].max()
 
                 self.resultExport(schedule_df, fitness_evolution, best_objective_value[0], project_end_time)
