@@ -19,7 +19,8 @@ mpl.rcParams['font.sans-serif'] = ['SimHei']
 class GA:
     """遗传算法类"""
 
-    def __init__(self, data, strategy, objective, population_size, crossover_rate, mutation_rate, select_rate, best_keep_num,
+    def __init__(self, data, strategy, objective, population_size, crossover_rate, mutation_rate, select_rate,
+                 best_keep_num,
                  evolution_num, mutation_change_point):
         """
         :param data: 传入遗传算法的对应数据类GAData
@@ -90,7 +91,6 @@ class GA:
 
     def decodeJob(self, is_first_job_of_machine, machine_id, job_id, result):
         """对某机器上的任务进行解码"""
-        # TODO：修改解码方式
 
         # 数据准备
         '''结果存储，生成dataframe'''
@@ -104,12 +104,24 @@ class GA:
         product_id_list = []
         num_list = []
 
+        '''结果存储，生成用于计算目标值的schedule_dataframe'''
+        start_time_list_for_cal = []
+        end_time_list_for_cal = []
+        machine_list_for_cal = []
+        machine_status_list_for_cal = []
+        procedure_list_for_cal = []
+        category_id_list_for_cal = []
+        order_id_list_for_cal = []
+        product_id_list_for_cal = []
+
         this_job = self.jobs.loc[job_id]
         this_machine = self.machines.loc[machine_id]
         order_batch = self.order_batches.loc[job_id]
         this_procedure = this_machine.procedure
         maintenance_day0 = this_machine.maintenance_day[0]  # 机器当月的维修日期
         maintenance_day1 = this_machine.maintenance_day[1]  # 机器下月的维修日期
+        model_change_time = this_machine.model_change_time
+        processing_time = this_machine.processing_time.loc[job_id]
 
         def linesAppend(status, start_time, end_time, category_ID, order_ID, product_ID, num_index):
             """往结果中增添一行"""
@@ -123,113 +135,128 @@ class GA:
             product_id_list.append(product_ID)
             num_list.append(num_index)
 
+        def linesAppendForCal(status, start_time, end_time, category_ID, order_ID, product_ID):
+            """往结果中增添一行"""
+            start_time_list_for_cal.append(start_time)
+            end_time_list_for_cal.append(end_time)
+            machine_list_for_cal.append(machine_id)
+            machine_status_list_for_cal.append(status)
+            procedure_list_for_cal.append(this_procedure)
+            category_id_list_for_cal.append(category_ID)
+            order_id_list_for_cal.append(order_ID)
+            product_id_list_for_cal.append(product_ID)
+
+        def saveSegment(start_time, end_time, status, this_order, product_ID):
+            if status == "生产":
+                this_order_id = this_order.order_id
+                for item_index in range(this_order.product_number):
+                    item_start_time = start_time + item_index * processing_time
+                    item_end_time = start_time + (item_index + 1) * processing_time
+                    job_segment = {
+                        "start": self.cal.time_to_str(item_start_time),
+                        "end": self.cal.time_to_str(item_end_time),
+                        "val": [20, this_order_id, product_ID, item_index + 1]
+                    }
+                    result[machine_id - 1]["data"].append(job_segment)
+                    linesAppend('生产', item_start_time, item_end_time, job_id, this_order_id, product_ID,
+                                item_index + 1)
+                linesAppendForCal('生产', start_time, end_time, job_id, this_order_id, product_ID)
+            elif status == "维保":
+                job_segment_maintenance = {
+                    "start": self.cal.time_to_str(start_time),
+                    "end": self.cal.time_to_str(end_time),
+                    "val": [1]
+                }
+                result[machine_id - 1]["data"].append(job_segment_maintenance)
+                linesAppend('维保', start_time, end_time, '维保', '', '', '')
+            elif status == "停机":
+                job_segment_shutdown = {
+                    "start": self.cal.time_to_str(start_time),
+                    "end": self.cal.time_to_str(end_time),
+                    "val": [0]
+                }
+                result[machine_id - 1]["data"].append(job_segment_shutdown)
+                linesAppend('停机', start_time, end_time, '停机', '', '', '')
+            elif status == "空转":
+                job_segment_idle = {
+                    "start": self.cal.time_to_str(start_time),
+                    "end": self.cal.time_to_str(end_time),
+                    "val": [10]
+                }
+                result[machine_id - 1]["data"].append(job_segment_idle)
+                linesAppend('空转', start_time, end_time, '空转', '', '', '')
+
         model_index = 0
         for model_id, order_by_model in order_batch.items():  # 遍历该类别下的每个型号
             product_id = model_id
             for order_index, order in enumerate(order_by_model):  # 遍历型号对应的每个订单
-                order_id = order.order_id
                 item_num = order.product_number
-                for item_index in range(item_num):  # 遍历一个订单中的每一件产品
-                    num = item_index + 1  # 产品序号
+                order_processing_time = item_num * processing_time
+                duration_start_time = 0
+                duration_end_time = 0
+                maintenance_start_time = 0
+                maintenance_end_time = 0
+                machine_status = 0
 
-                    flag_maintenance = 0  # 设备维修保养状态标记
-                    flag_idle = 0  # 设备空转状态标记
-                    flag_shutdown = 0  # 设备停机状态标记
-                    duration_start_time = 0  # 设备生产间隔的开始时间
-                    duration_end_time = 0  # 设备生产间隔的结束时间
-                    maintenance_start_time = 0  # 设备维修开始时间
-                    maintenance_end_time = 0  # 设备维修结束时间
-
-                    # 计算产品的加工开始时间
-                    if (is_first_job_of_machine == 1) & (model_index == 0) & (order_index == 0) & (
-                            item_index == 0):  # 机器上的第一个job的第一个产品
-                        item_start_time = this_job.latest_end_time  # 该job的上一道工序结束时间
-                    elif (model_index == 0) & (order_index == 0) & (item_index == 0):  # 机器上的某个job的第一个产品（更换job时），需要换型
-                        change_start_time = this_machine.latest_end_time  # 换型开始时间
-                        change_end_time = change_start_time + this_machine.model_change_time
-                        item_start_time = max(change_end_time,
-                                              this_job.latest_end_time)  # 该job的上一道工序结束时间和机器上一次加工结束时间之间的最大值
-                        # 判断两个job的生产间隔中机器的状态
-                        if this_machine.is_shutdown_when_change_model:  # 如果换型需要停机，则机器停机
-                            flag_shutdown = 1
-                        elif item_start_time - this_machine.latest_end_time > this_machine.max_idle_time:
-                            # 如果换型不需停机，则判断间隔时间是否超过机器最大空转时间，如果超过，则机器停机；否则机器空转
-                            flag_shutdown = 1
-                        else:
-                            flag_idle = 1
-                        duration_start_time = this_machine.latest_end_time  # 两个job间隔时间段的起点
-                        duration_end_time = item_start_time  # 两个job间隔时间段的终点
-                    elif (order_index == 0) & (item_index == 0):  # 如果是某一型号的第一个产品，生产该产品前需要加上换型时间
-                        if this_machine.is_shutdown_when_change_model:
-                            flag_shutdown = 1
-                        else:
-                            flag_idle = 1
-                        duration_start_time = this_machine.latest_end_time  # 换型的开始时间
-                        duration_end_time = duration_start_time + this_machine.model_change_time  # 换型的结束时间
-                        item_start_time = duration_end_time
+                # 计算订单的开始加工时间
+                if (is_first_job_of_machine == 1) & (model_index == 0) & (order_index == 0):  # 若是机器上第一个job的第一个订单
+                    order_start_time = this_job.latest_end_time  # 该job的上一道工序结束时间
+                elif (model_index == 0) & (order_index == 0):  # 若是机器上非第一个job的第一个订单，需要换型
+                    change_start_time = this_machine.latest_end_time
+                    change_end_time = change_start_time + model_change_time
+                    order_start_time = max(change_end_time,
+                                           this_job.latest_end_time)  # 该job的上一道工序结束时间和机器上一次加工结束时间之间的最大值
+                    # 判断两个job的生产间隔中机器的状态
+                    if this_machine.is_shutdown_when_change_model:  # 如果换型需要停机，则机器停机
+                        machine_status = "停机"
+                    elif order_start_time - this_machine.latest_end_time > this_machine.max_idle_time:
+                        # 如果换型不需停机，则判断间隔时间是否超过机器最大空转时间，如果超过，则机器停机；否则机器空转
+                        machine_status = "停机"
                     else:
-                        item_start_time = this_machine.latest_end_time
+                        machine_status = "空转"
+                    duration_start_time = this_machine.latest_end_time  # 两个job间隔时间段的起点
+                    duration_end_time = order_start_time  # 两个job间隔时间段的终点
+                else:
+                    order_start_time = this_machine.latest_end_time + model_change_time
+                    # 判断两个job的生产间隔中机器的状态
+                    if this_machine.is_shutdown_when_change_model:  # 如果换型需要停机，则机器停机
+                        machine_status = "停机"
+                    elif order_start_time - this_machine.latest_end_time > this_machine.max_idle_time:
+                        # 如果换型不需停机，则判断间隔时间是否超过机器最大空转时间，如果超过，则机器停机；否则机器空转
+                        machine_status = "停机"
+                    else:
+                        machine_status = "空转"
+                    duration_start_time = this_machine.latest_end_time  # 两个job间隔时间段的起点
+                    duration_end_time = order_start_time  # 两个job间隔时间段的终点
 
-                    # 判断产品的加工开始时间是否在维保期
-                    if maintenance_day0 <= item_start_time <= maintenance_day0 + np.timedelta64(24, 'h'):
-                        flag_maintenance = 1
-                        maintenance_start_time = maintenance_day0
-                        maintenance_end_time = maintenance_day0 + np.timedelta64(24, 'h')
-                        item_start_time = maintenance_end_time  # 在维保期后才能开始生产，TODO：尝试其他的策略
-                    if maintenance_day1 <= item_start_time <= maintenance_day1 + np.timedelta64(24, 'h'):
-                        flag_maintenance = 1
-                        maintenance_start_time = maintenance_day1
-                        maintenance_end_time = maintenance_day1 + np.timedelta64(24, 'h')
-                        item_start_time = maintenance_end_time  # 在维保期后才能开始生产，TODO：尝试其他的策略
+                # 判断产品的加工开始时间是否在维保期
+                if maintenance_day0 <= order_start_time <= maintenance_day0 + np.timedelta64(24, 'h'):
+                    machine_status = "维保"
+                    maintenance_start_time = maintenance_day0
+                    maintenance_end_time = maintenance_day0 + np.timedelta64(24, 'h')
+                    order_start_time = maintenance_end_time  # 在维保期后才能开始生产
+                if maintenance_day1 <= order_start_time <= maintenance_day1 + np.timedelta64(24, 'h'):
+                    machine_status = "维保"
+                    maintenance_start_time = maintenance_day1
+                    maintenance_end_time = maintenance_day1 + np.timedelta64(24, 'h')
+                    order_start_time = maintenance_end_time  # 在维保期后才能开始生产
 
-                    if (is_first_job_of_machine == 1) & (model_index == 0) & (order_index == 0) & (item_index == 0):
-                        this_machine.first_start_time = item_start_time  # 该机器第一次的开机时间
+                if (is_first_job_of_machine == 1) & (model_index == 0) & (order_index == 0):
+                    this_machine.first_start_time = order_start_time  # 该机器第一次的开机时间
 
-                    # 计算产品的加工结束时间
-                    item_end_time = item_start_time + this_machine.processing_time.loc[job_id]
+                # 计算订单的结束订单时间
+                order_end_time = order_start_time + order_processing_time
+                if machine_status == "维保":
+                    saveSegment(maintenance_start_time, maintenance_end_time, "维保", order, product_id)
+                    if not isinstance(duration_start_time, int):
+                        saveSegment(duration_start_time, duration_end_time, "停机", order, product_id)
+                elif not isinstance(duration_start_time, int):
+                    saveSegment(duration_start_time, duration_end_time, machine_status, order, product_id)
+                saveSegment(order_start_time, order_end_time, "生产", order, product_id)
 
-                    # 保存机器空转的时间段
-                    if flag_idle == 1:
-                        job_segment_idle = {
-                            "start": self.cal.time_to_str(duration_start_time),
-                            "end": self.cal.time_to_str(duration_end_time),
-                            "val": [10]
-                        }
-                        result[machine_id - 1]["data"].append(job_segment_idle)
-                        linesAppend('空转', duration_start_time, duration_end_time, '空转', '', '', '')
+                this_machine.latest_end_time = order_end_time
+                this_job.latest_end_time = order_end_time
 
-                    # 保存机器停机维修保养的时间段
-                    if flag_maintenance == 1:
-                        job_segment_maintenance = {
-                            "start": self.cal.time_to_str(maintenance_start_time),
-                            "end": self.cal.time_to_str(maintenance_end_time),
-                            "val": [1]
-                        }
-                        result[machine_id - 1]["data"].append(job_segment_maintenance)
-                        linesAppend('维保', maintenance_start_time, maintenance_end_time, '维保', '', '',
-                                    '')
-
-                    # 保存机器停机的时间段
-                    if flag_shutdown == 1:
-                        job_segment_shutdown = {
-                            "start": self.cal.time_to_str(duration_start_time),
-                            "end": self.cal.time_to_str(duration_end_time),
-                            "val": [0]
-                        }
-                        result[machine_id - 1]["data"].append(job_segment_shutdown)
-                        linesAppend('停机', duration_start_time, duration_end_time, '停机', '', '', '')
-
-                    # 保存机器生产的任务段
-                    job_segment = {
-                        "start": self.cal.time_to_str(item_start_time),
-                        "end": self.cal.time_to_str(item_end_time),
-                        "val": [20, order_id, product_id, item_num]
-                    }
-                    result[machine_id - 1]["data"].append(job_segment)
-                    linesAppend('生产', item_start_time, item_end_time, job_id, order_id, product_id, num)
-
-                    this_machine.latest_end_time = item_end_time
-                    this_job.latest_end_time = item_end_time
             model_index += 1
 
         result_df = pd.DataFrame(list(
@@ -237,10 +264,19 @@ class GA:
                 order_id_list,
                 product_id_list,
                 num_list)))
+        result_df_for_cal = pd.DataFrame(list(
+            zip(machine_list_for_cal, start_time_list_for_cal, end_time_list_for_cal, machine_status_list_for_cal,
+                procedure_list_for_cal,
+                category_id_list_for_cal,
+                order_id_list_for_cal,
+                product_id_list_for_cal)))
         result_df.columns = ['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID',
                              'Order ID',
                              'Product ID', '#']
-        return result, result_df
+        result_df_for_cal.columns = ['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID',
+                                     'Order ID',
+                                     'Product ID']
+        return result, result_df, result_df_for_cal
 
     def decodeChromosome(self, chromosome):
         """对染色体进行解码，返回json格式和dataframe格式的调度表，以及机器第一次开机时间"""
@@ -251,6 +287,9 @@ class GA:
             columns=['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID', 'Order ID',
                      'Product ID',
                      '#'])  # dataframe格式的结果
+        schedule_df_for_cal = pd.DataFrame(
+            columns=['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID', 'Order ID',
+                     'Product ID'])  # dataframe格式的结果
         for i in range(self.machine_num):
             shop = {
                 "name": "Shop" + str(i + 1),
@@ -265,12 +304,13 @@ class GA:
             machine_id = chromosome[i][1]  # 机器编号
             job_count_of_machine[machine_id - 1] += 1
             if job_count_of_machine[machine_id - 1] == 1:  # 该job是这个机器上的第一个加工任务
-                result_schedule, result_df = \
+                result_schedule, result_df, result_df_for_cal = \
                     self.decodeJob(1, machine_id, job_id, result_schedule)
             else:
-                result_schedule, result_df = \
+                result_schedule, result_df, result_df_for_cal = \
                     self.decodeJob(0, machine_id, job_id, result_schedule)
             schedule_df = pd.concat([schedule_df, result_df])
+            schedule_df_for_cal = pd.concat([schedule_df_for_cal, result_df_for_cal])
 
         for machine in self.machines:
             machine_first_start_time.append(machine.first_start_time)
@@ -278,35 +318,33 @@ class GA:
         self.data.resetMachine(self.machines)
         self.data.resetJob(self.jobs)
         schedule_df.index = [_ for _ in range(schedule_df.shape[0])]
-        return result_schedule, schedule_df, machine_first_start_time
+        schedule_df_for_cal.index = [_ for _ in range(schedule_df_for_cal.shape[0])]
+        return result_schedule, schedule_df, schedule_df_for_cal, machine_first_start_time
 
     def getObjectiveValue(self, chromosome):
         """获取个体的目标值"""
         if self.objective == 2:
-            _, schedule_dataframe, machine_first_start_time = self.decodeChromosome(chromosome)
-            project_start_time = schedule_dataframe['Start Time'].min()
-            project_end_time = schedule_dataframe['End Time'].max()
-            objective_value = self.cal.getEnergyCost(schedule_dataframe, machine_first_start_time)
-            return project_start_time, project_end_time, objective_value, schedule_dataframe
+            _, _, schedule_dataframe_for_cal, machine_first_start_time = self.decodeChromosome(chromosome)
+            project_start_time = schedule_dataframe_for_cal['Start Time'].min()
+            project_end_time = schedule_dataframe_for_cal['End Time'].max()
+            objective_value = self.cal.getEnergyCost(schedule_dataframe_for_cal, machine_first_start_time)
+            return project_start_time, project_end_time, objective_value
 
     def getFitness(self, query_population):
         """获取种群的适应度，返回适应度的array"""
         fitness_list = []
         project_start_time_list = []
         project_end_time_list = []
-        schedule_list = []
         if self.objective == 2:  # 能耗成本最小化
             for i in range(len(query_population)):  # 遍历种群中的每个个体
                 # 对于一个新的个体，就要重置jobs和machines（latest end time，first start time），实例对象属性绑定
-                project_start_time, project_end_time, objective_value, schedule_dataframe = self.getObjectiveValue(
-                    query_population[i])
-                fitness = 1 / objective_value  # TODO：适应度的计算方式可以替换
+                project_start_time, project_end_time, objective_value = self.getObjectiveValue(query_population[i])
+                fitness = 1 / objective_value
                 fitness_list.append(fitness)
                 project_start_time_list.append(project_start_time)
                 project_end_time_list.append(project_end_time)
-                schedule_list.append(schedule_dataframe)
         fitness_array = np.array(fitness_list)
-        return project_start_time_list, project_end_time_list, fitness_array, schedule_list
+        return project_start_time_list, project_end_time_list, fitness_array
 
     @staticmethod
     def getBestChromosome(population, fitness_array, project_end_time_list, best_num):
@@ -425,7 +463,7 @@ class GA:
                 offspring[random_point:random_point + R] = list(element)
                 offsprings[index] = offspring
             offsprings = self.populationCorrecting(offsprings)
-            project_start_time_list, project_end_time_list, fitness_array, schedule_list = self.getFitness(offsprings)
+            project_start_time_list, project_end_time_list, fitness_array = self.getFitness(offsprings)
             best_chromosome, _, _ = self.getBestChromosome(offsprings, fitness_array, project_end_time_list, 1)
             return best_chromosome
 
@@ -450,7 +488,7 @@ class GA:
     def select(self, offspring_population, best_chromosome, fitness_array, select_rate):
         """选择用于交叉变异的个体"""
         sort_index = np.argsort(-fitness_array)
-        select_num = int((self.population_size-self.best_keep_num) * select_rate)
+        select_num = int((self.population_size - self.best_keep_num) * select_rate)
         select_population = offspring_population[sort_index][:select_num]
         new_num = self.population_size - select_num - len(best_chromosome)
         new_population = self.initialPopulation(new_num)
@@ -538,11 +576,11 @@ class GA:
         """用于多进程解码的实现，个体的解码函数"""
         print("\033[1;32m", "█", "\033[0m", sep="", end="")
         if self.objective == 2:
-            _, schedule_dataframe, machine_first_start_time = self.decodeChromosome(chromosome)
-            project_start_time = schedule_dataframe['Start Time'].min()
-            project_end_time = schedule_dataframe['End Time'].max()
-            objective_value = self.cal.getEnergyCost(schedule_dataframe, machine_first_start_time)
-            return project_start_time, project_end_time, 1 / objective_value, schedule_dataframe
+            _, _, schedule_dataframe_for_cal, machine_first_start_time = self.decodeChromosome(chromosome)
+            project_start_time = schedule_dataframe_for_cal['Start Time'].min()
+            project_end_time = schedule_dataframe_for_cal['End Time'].max()
+            objective_value = self.cal.getEnergyCost(schedule_dataframe_for_cal, machine_first_start_time)
+            return project_start_time, project_end_time, 1 / objective_value
         time.sleep(0.01)
 
     def multiprocessDecode(self, population, iterate_count):
@@ -552,7 +590,7 @@ class GA:
         decode_args = zip(population)
         decode_results = decode_multiprocess.work(self.decodeChildTask, decode_args, iterate_count)
         fitness_array = np.array(decode_results[2])  # 把适应度list转化为array
-        return decode_results[1], fitness_array, decode_results[3]
+        return decode_results[1], fitness_array
 
     def mutationChildTask(self, population, iterate_num):
         """用于多进程变异的实现，种群变异函数"""
@@ -575,8 +613,7 @@ class GA:
                 offspring[random_point:random_point + R] = list(element)
                 offsprings[index] = offspring
             offsprings = self.populationCorrecting(offsprings)
-            project_start_time_list, project_end_time_list, fitness_array, schedule_list = self.getFitness(
-                offsprings)
+            project_start_time_list, project_end_time_list, fitness_array = self.getFitness(offsprings)
             best_chromosome, _, _ = self.getBestChromosome(offsprings, fitness_array, project_end_time_list, 1)
 
             return best_chromosome
@@ -599,7 +636,6 @@ class GA:
         iterate_count_all = 1  # 记录总的迭代次数
 
         #############初始化种群############
-        # global population
         while execute_flag:
             another_execute = False
             iterate_flag = True
@@ -607,10 +643,12 @@ class GA:
 
             ##############生成初始种群#############
             population = self.initialPopulation(self.population_size)
-            project_end_time, fitness_array, _ = self.multiprocessDecode(population, iterate_count)
+            project_end_time, fitness_array = self.multiprocessDecode(population, iterate_count)
             best_chromosome, best_objective_value, best_end = self.getBestChromosome(population, fitness_array,
-                                                                                     project_end_time, self.best_keep_num)
-            print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (iterate_count, best_objective_value[0], best_end[0]))
+                                                                                     project_end_time,
+                                                                                     self.best_keep_num)
+            print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (
+                iterate_count, best_objective_value[0], best_end[0]))
             iterate_count += 1
 
             #############进行若干次进化#############
@@ -626,12 +664,12 @@ class GA:
                 offspring_population = np.vstack((crossover_population, mutation_population))
 
                 ####################种群适应度计算####################
-                project_end_time, fitness_array, _ = self.multiprocessDecode(offspring_population, iterate_count)
+                project_end_time, fitness_array = self.multiprocessDecode(offspring_population, iterate_count)
 
                 ####################更新种群优秀个体###################
                 best_chromosome, best_objective_value, best_end = self.getBestChromosome(
                     np.vstack((offspring_population, best_chromosome)),
-                    np.append(fitness_array, 1/best_objective_value, axis=0),
+                    np.append(fitness_array, 1 / best_objective_value, axis=0),
                     np.append(project_end_time, best_end, axis=0),
                     self.best_keep_num)
                 # 记录本代的最优目标值
@@ -682,6 +720,7 @@ class GA:
                             another_execute = True
                         else:
                             print(f"继续本次的GA运行，进入第{iterate_count + 1}次迭代进化。")
+
                 iterate_count += 1
                 iterate_count_all += 1
                 isStop()
@@ -690,7 +729,7 @@ class GA:
 
             if not another_execute:
                 """结果输出"""
-                _, schedule_df, _ = self.decodeChromosome(best_chromosome[0])
+                _, schedule_df, _, _ = self.decodeChromosome(best_chromosome[0])
                 project_end_time = schedule_df['End Time'].max()
 
                 self.resultExport(schedule_df, fitness_evolution, best_objective_value[0], project_end_time)
@@ -700,5 +739,3 @@ class GA:
                 print("完工时间为：" + str(project_end_time))
 
             execute_count += 1
-
-# if __name__=='__main__':

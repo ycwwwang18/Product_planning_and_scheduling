@@ -116,17 +116,94 @@ class CalculateUtils:
         self.night_shift0 = IntervalSet.between("22:00", "23:59")  # 夜班
         self.night_shift1 = IntervalSet.between("00:00", "06:00")  # 夜班
 
-    def getEnergyCost(self, schedule, machine_first_start_time):
-        """获得某个调度表下的能耗成本"""
+    def getMachineEnergyConsume(self, Id, status):
+        """获取某个机器在某状态下的能耗"""
+        if status == '生产':
+            return self.DATA.machine_energy_consumption.loc[Id, "生产能耗/小时"]
+        elif status == '空转':
+            return self.DATA.machine_energy_consumption.loc[Id, "空转(开机等待)能耗/小时"]
+        else:
+            return self.DATA.machine_energy_consumption.loc[Id, "开机一次性能耗"]
 
-        def getMachineEnergyConsume(Id, status):
-            """对外接口，获取某个机器在某状态下的能耗"""
-            if status == '生产':
-                return self.DATA.machine_energy_consumption.loc[Id, "生产能耗/小时"]
-            elif status == '空转':
-                return self.DATA.machine_energy_consumption.loc[Id, "空转(开机等待)能耗/小时"]
+    def getEnergyPrice(self, duration_start_time, duration_end_time):
+        """获取当前时间段下的能耗价格*时长；如果两个时间相等，就是获取当前时间的能耗价格"""
+
+        def get_overlap_hours(query_duration, shift):
+            """获取某时间段在某个班次下的时长"""
+            overlap_duration = query_duration & shift
+            if overlap_duration:
+                upper = overlap_duration.upper_bound()
+                lower = overlap_duration.lower_bound()
+                duration_length = datetime.datetime.strptime(upper, "%H:%M") - \
+                                  datetime.datetime.strptime(lower, "%H:%M")
+                if upper == '23:59':
+                    hours = (duration_length.total_seconds() + 60) / 3600  # 加上23:59到0:00之间的1分钟
+                else:
+                    hours = duration_length.total_seconds() / 3600
             else:
-                return self.DATA.machine_energy_consumption.loc[Id, "开机一次性能耗"]
+                hours = 0
+
+            return hours
+
+        if duration_start_time == 0:  # 意味着这个机器没有启用
+            return 0
+
+        # 将时间转化为datetime.datetime类型
+        try:
+            duration_start_time = duration_start_time.astype(datetime.datetime)
+            duration_end_time = duration_end_time.astype(datetime.datetime)
+        except AttributeError:
+            duration_start_time = datetime.datetime.strptime(duration_start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                                             '%Y-%m-%d %H:%M:%S')
+            duration_end_time = datetime.datetime.strptime(duration_end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                                           '%Y-%m-%d %H:%M:%S')
+
+        start_date = duration_start_time.date()
+        end_date = duration_end_time.date()
+
+        if duration_start_time == duration_end_time:  # 是一个时间点
+            date_factor = self.price.getDateFactor(start_date)
+            duration_start_time = duration_start_time.strftime("%H:%M")
+            if duration_start_time in self.day_shift:
+                return self.price.energy_price_day * date_factor
+            elif duration_start_time in self.evening_shift:
+                return self.price.energy_price_evening * date_factor
+            else:
+                return self.price.energy_price_night * date_factor
+        elif start_date == end_date:  # 该时间段在一天内
+            duration_start_time = duration_start_time.strftime("%H:%M")
+            duration_end_time = duration_end_time.strftime("%H:%M")
+            duration = IntervalSet.between(duration_start_time, duration_end_time)  # 当前时间段
+            date_factor = self.price.getDateFactor(start_date)
+            day_hours = get_overlap_hours(duration, self.day_shift)
+            evening_hours = get_overlap_hours(duration, self.evening_shift)
+            night_hours = get_overlap_hours(duration, self.night_shift0) + get_overlap_hours(duration, self.night_shift1)
+            price = day_hours * self.price.energy_price_day + evening_hours * self.price.energy_price_evening + night_hours * self.price.energy_price_night
+            total_price = price * date_factor
+            return total_price
+        else:  # 该时间段跨了多天
+            duration_start_time = duration_start_time.strftime("%H:%M")
+            duration_end_time = duration_end_time.strftime("%H:%M")
+            date = start_date
+            total_price = 0
+            while date <= end_date:
+                date_factor = self.price.getDateFactor(date)
+                if date == start_date:
+                    duration = IntervalSet.between(duration_start_time, "23:59")
+                elif date == end_date:
+                    duration = IntervalSet.between("00:00", duration_end_time)
+                else:
+                    duration = IntervalSet.between("00:00", "23:59")
+                day_hours = get_overlap_hours(duration, self.day_shift)
+                evening_hours = get_overlap_hours(duration, self.evening_shift)
+                night_hours = get_overlap_hours(duration, self.night_shift0) + get_overlap_hours(duration, self.night_shift1)
+                total_price += (day_hours * self.price.energy_price_day + evening_hours * self.price.energy_price_evening
+                                + night_hours * self.price.energy_price_night) * date_factor
+                date += datetime.timedelta(days=1)
+            return total_price
+
+    def getEnergyCostFromSchedule(self, schedule, machine_first_start_time):
+        """获得某个调度表下的能耗成本"""
 
         def getEnergyPrice(duration_start_time, duration_end_time):
             """获取当前时间段下的能耗价格*时长；如果两个时间相等，就是获取当前时间的能耗价格"""
@@ -155,8 +232,10 @@ class CalculateUtils:
                 duration_start_time = duration_start_time.astype(datetime.datetime)
                 duration_end_time = duration_end_time.astype(datetime.datetime)
             except AttributeError:
-                duration_start_time = datetime.datetime.strptime(duration_start_time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
-                duration_end_time = datetime.datetime.strptime(duration_end_time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
+                duration_start_time = datetime.datetime.strptime(duration_start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                                                 '%Y-%m-%d %H:%M:%S')
+                duration_end_time = datetime.datetime.strptime(duration_end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                                               '%Y-%m-%d %H:%M:%S')
             start_date = duration_start_time.date()
             end_date = duration_end_time.date()
             duration_start_time = duration_start_time.strftime("%H:%M")
@@ -175,7 +254,8 @@ class CalculateUtils:
                 date_factor = self.price.getDateFactor(start_date)
                 day_hours = get_overlap_hours(duration, self.day_shift)
                 evening_hours = get_overlap_hours(duration, self.evening_shift)
-                night_hours = get_overlap_hours(duration, self.night_shift0) + get_overlap_hours(duration, self.night_shift1)
+                night_hours = get_overlap_hours(duration, self.night_shift0) + get_overlap_hours(duration,
+                                                                                                 self.night_shift1)
                 price = day_hours * self.price.energy_price_day + evening_hours * self.price.energy_price_evening + night_hours * self.price.energy_price_night
                 total_price = price * date_factor
                 return total_price
@@ -201,7 +281,7 @@ class CalculateUtils:
             machine_status = row['Machine Status']
             start_time = row['Start Time']
             end_time = row['End Time']
-            energy_consumption = getMachineEnergyConsume(machine_id, machine_status)
+            energy_consumption = self.getMachineEnergyConsume(machine_id, machine_status)
             if machine_status == "停机":
                 energy_price = getEnergyPrice(end_time, end_time)
             else:
@@ -211,6 +291,30 @@ class CalculateUtils:
         # 计算机器第一次开机时的能耗成本
         for i, first_start_time in enumerate(machine_first_start_time):
             machine_first_start_price[i] = getEnergyPrice(first_start_time, first_start_time)
+        first_start_energy_cost = self.DATA.startup_energy_consumption * machine_first_start_price
+
+        total_energy_cost += first_start_energy_cost.sum()
+        return total_energy_cost
+
+    def getEnergyCost(self, schedule_for_cal, machine_first_start_time):
+        total_energy_cost = 0
+        machine_first_start_price = np.zeros(shape=self.DATA.machine_num)  # 机器第一次开机时的能耗价格
+
+        for _, row in schedule_for_cal.iterrows():
+            machine_id = row['Machine']
+            machine_status = row['Machine Status']
+            start_time = row['Start Time']
+            end_time = row['End Time']
+            energy_consumption = self.getMachineEnergyConsume(machine_id, machine_status)
+            if machine_status == "停机":
+                energy_price = self.getEnergyPrice(end_time, end_time)
+            else:
+                energy_price = self.getEnergyPrice(start_time, end_time)
+            total_energy_cost += energy_consumption * energy_price
+
+        # 计算机器第一次开机时的能耗成本
+        for i, first_start_time in enumerate(machine_first_start_time):
+            machine_first_start_price[i] = self.getEnergyPrice(first_start_time, first_start_time)
         first_start_energy_cost = self.DATA.startup_energy_consumption * machine_first_start_price
 
         total_energy_cost += first_start_energy_cost.sum()
@@ -270,8 +374,8 @@ class GAData:
         def getOrderByCategoryAndModel(category_id, model_id):
             order_list = []
             order_id_tuple = self.DATA.order_table[(self.DATA.order_table["产品类别"] == category_id) &
-                                              (self.DATA.order_table["产品型号"] == model_id)
-                                              ].index
+                                                   (self.DATA.order_table["产品型号"] == model_id)
+                                                   ].index
             for order_id in order_id_tuple:
                 order = Order(order_id)
                 order_list.append(order)
