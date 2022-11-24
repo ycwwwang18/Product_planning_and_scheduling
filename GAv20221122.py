@@ -3,7 +3,6 @@ import json
 import sys
 
 import numpy as np
-
 from datav20221110 import *
 from multiprocess import *
 from pylab import *
@@ -630,7 +629,9 @@ class GA:
     def execute(self):
         """执行GA"""
         fitness_evolution = []  # 记录每一代的最优目标值
+        best_chromosome = []  # 记录当前的最优个体
         best_objective_value = 0  # 记录当前的最优目标值
+        best_end = 0  # 记录当前的最优完工时间
         execute_flag = True
         execute_count = 1
         iterate_count_all = 1  # 记录总的迭代次数
@@ -644,9 +645,16 @@ class GA:
             ##############生成初始种群#############
             population = self.initialPopulation(self.population_size)
             project_end_time, fitness_array = self.multiprocessDecode(population, iterate_count)
-            best_chromosome, best_objective_value, best_end = self.getBestChromosome(population, fitness_array,
-                                                                                     project_end_time,
-                                                                                     self.best_keep_num)
+            if isinstance(best_chromosome, np.ndarray):
+                best_chromosome, best_objective_value, best_end = self.getBestChromosome(
+                    np.vstack((population, best_chromosome)),
+                    np.append(fitness_array, 1 / best_objective_value, axis=0),
+                    np.append(project_end_time, best_end, axis=0),
+                    self.best_keep_num)
+            else:
+                best_chromosome, best_objective_value, best_end = self.getBestChromosome(population, fitness_array,
+                                                                                         project_end_time,
+                                                                                         self.best_keep_num)
             print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (
                 iterate_count, best_objective_value[0], best_end[0]))
             iterate_count += 1
@@ -707,7 +715,7 @@ class GA:
                             another_execute = True
 
                     # 通过外界输入来控制进程
-                    if iterate_count_all > 25:
+                    if iterate_count_all > 40:
                         key_board_input = input(
                             "按Enter结束GA运行，输出最终结果；按c终止本次GA运行，开启新一次的GA运行；否则继续运行：")
                         if key_board_input == '':

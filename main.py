@@ -30,7 +30,7 @@ def run():
         select_rate = 0.8
         best_keep_num = 16
         mutation_change_point = 30
-        evolution_num = 1
+        evolution_num = 100
         dataPrepare(order_name, order_time, strategy, objective, population_size, crossover_rate,
                     mutation_rate, select_rate, best_keep_num, evolution_num, mutation_change_point)
         ga.execute()
