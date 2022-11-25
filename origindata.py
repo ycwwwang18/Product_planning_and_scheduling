@@ -62,8 +62,7 @@ class Data:
         self.procedure_num_of_category = self.getProcedureNumOfCategory()  # 所有产品类别的工序道数
         self.machine_of_category = self.getMachineOfCategory()  # 所有产品类别的每道工序的加工机器列表
         self.order_earliest_start_time = self.order_time + self.lead_time
-
-        # self.orders = self.getOrders()  # 所有的订单
+        self.piece_cost = self.getPieceCost()
 
         def getFeasibleCategory(category_string):
             """获取某一机器对应的可选产品类别集合，返回list"""
@@ -296,3 +295,19 @@ class Data:
                                np.datetime64(getMachineMaintenanceDayOfMonth(m, order_time_next_month))]
             maintenance_day_list.append(maintenance_day)
         return maintenance_day_list
+
+    def getProcedureYield(self):
+        """获得每个工序的产量"""
+        category_procedure = np.array(self.procedure_for_category)
+        category_order_num = self.order_table.loc[:, ['产品类别', '数量']]
+        category_order_num = category_order_num.groupby("产品类别").sum()
+        category_order_num = np.array(category_order_num.loc[:, '数量'])
+        procedure_yield = category_order_num @ category_procedure
+        return procedure_yield
+
+    def getPieceCost(self):
+        piece_cost_procedure = np.array(self.cost_for_procedure.loc[:, "计件成本因子"])
+        procedure_yield = self.getProcedureYield()
+        total_piece_cost = procedure_yield @ piece_cost_procedure
+        return total_piece_cost
+

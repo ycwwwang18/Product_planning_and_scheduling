@@ -121,6 +121,7 @@ class CalculateUtils:
         self.day_shift_labor = IntervalSet.between("08:00", "16:00")  # 人工白班
         self.evening_shift_labor = IntervalSet.between("16:00", "23:59")  # 人工晚班
         self.night_shift_labor = IntervalSet.between("00:00", "08:00")  # 人工夜班
+        self.piece_cost = DATA.piece_cost
 
     def getMachineEnergyConsume(self, Id, status):
         """获取某个机器在某状态下的能耗"""
