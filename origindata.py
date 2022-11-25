@@ -132,6 +132,7 @@ class Data:
         self.cost_for_procedure.drop(axis=0, index=0, inplace=True)
         self.cost_for_procedure["工序编号"] = self.cost_for_procedure.工序编号.map(lambda x: int(x[1:]))
         self.cost_for_procedure.set_index("工序编号", inplace=True)
+        self.cost_for_procedure.columns = ['夜班', '白班', '晚班', '人工成本因子', '计件成本因子']
 
         # 设备作业时间
         self.processing_time["设备编号"] = self.processing_time.设备编号.map(lambda x: int(x[1:]))

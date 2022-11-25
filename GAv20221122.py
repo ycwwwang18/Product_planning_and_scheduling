@@ -1,7 +1,6 @@
 import os
 import json
 import sys
-
 import numpy as np
 from datav20221110 import *
 from multiprocess import *
@@ -168,6 +167,7 @@ class GA:
                 }
                 result[machine_id - 1]["data"].append(job_segment_maintenance)
                 linesAppend('维保', start_time, end_time, '维保', '', '', '')
+                linesAppendForCal('维保', start_time, end_time, '维保', '', '')
             elif status == "停机":
                 job_segment_shutdown = {
                     "start": self.cal.time_to_str(start_time),
@@ -176,6 +176,7 @@ class GA:
                 }
                 result[machine_id - 1]["data"].append(job_segment_shutdown)
                 linesAppend('停机', start_time, end_time, '停机', '', '', '')
+                linesAppendForCal('停机', start_time, end_time, '停机', '', '')
             elif status == "空转":
                 job_segment_idle = {
                     "start": self.cal.time_to_str(start_time),
@@ -184,6 +185,7 @@ class GA:
                 }
                 result[machine_id - 1]["data"].append(job_segment_idle)
                 linesAppend('空转', start_time, end_time, '空转', '', '', '')
+                linesAppendForCal('空转', start_time, end_time, '空转', '', '')
 
         model_index = 0
         for model_id, order_by_model in order_batch.items():  # 遍历该类别下的每个型号
@@ -278,7 +280,7 @@ class GA:
         return result, result_df, result_df_for_cal
 
     def decodeChromosome(self, chromosome):
-        """对染色体进行解码，返回json格式和dataframe格式的调度表，以及机器第一次开机时间"""
+        """对染色体进行解码，返回调度表，以及机器第一次开机时间"""
 
         # 数据准备
         result_schedule = []  # 调度表
@@ -322,12 +324,13 @@ class GA:
 
     def getObjectiveValue(self, chromosome):
         """获取个体的目标值"""
-        if self.objective == 2:
-            _, _, schedule_dataframe_for_cal, machine_first_start_time = self.decodeChromosome(chromosome)
-            project_start_time = schedule_dataframe_for_cal['Start Time'].min()
-            project_end_time = schedule_dataframe_for_cal['End Time'].max()
-            objective_value = self.cal.getEnergyCost(schedule_dataframe_for_cal, machine_first_start_time)
-            return project_start_time, project_end_time, objective_value
+        _, _, schedule_dataframe_for_cal, machine_first_start_time = self.decodeChromosome(chromosome)
+        project_start_time = schedule_dataframe_for_cal['Start Time'].min()
+        project_end_time = schedule_dataframe_for_cal['End Time'].max()
+        energy_cost = self.cal.getEnergyCost(schedule_dataframe_for_cal, machine_first_start_time)
+        labor_cost = self.cal.getLaborCost(schedule_dataframe_for_cal)
+        objective_value = energy_cost + labor_cost
+        return project_start_time, project_end_time, objective_value
 
     def getFitness(self, query_population):
         """获取种群的适应度，返回适应度的array"""
@@ -575,13 +578,8 @@ class GA:
     def decodeChildTask(self, chromosome):
         """用于多进程解码的实现，个体的解码函数"""
         print("\033[1;32m", "█", "\033[0m", sep="", end="")
-        if self.objective == 2:
-            _, _, schedule_dataframe_for_cal, machine_first_start_time = self.decodeChromosome(chromosome)
-            project_start_time = schedule_dataframe_for_cal['Start Time'].min()
-            project_end_time = schedule_dataframe_for_cal['End Time'].max()
-            objective_value = self.cal.getEnergyCost(schedule_dataframe_for_cal, machine_first_start_time)
-            return project_start_time, project_end_time, 1 / objective_value
-        time.sleep(0.01)
+        project_start_time, project_end_time, objective_value = self.getObjectiveValue(chromosome)
+        return project_start_time, project_end_time, 1 / objective_value
 
     def multiprocessDecode(self, population, iterate_count):
         """多进程解码"""
@@ -595,28 +593,8 @@ class GA:
     def mutationChildTask(self, population, iterate_num):
         """用于多进程变异的实现，种群变异函数"""
         print("\033[1;32m", "█", "\033[0m", sep="", end="")
-        random_parent_index = np.random.randint(0, len(population))  # 随机抽取一个个体
-        R = np.random.randint(1, 4)  # 修改了这个, 不超过3
-        random_point = np.random.randint(0, self.chromosome_size - R + 1)  # 随机选取一个变异片段的端点
-        offspring = deepcopy(population[random_parent_index])
-        if iterate_num > self.mutation_change_point:
-            """对随机选取的片段进行打乱顺序"""
-            np.random.shuffle(offspring[random_point:random_point + R])
-            offspring = np.array([offspring])
-            offspring = self.populationCorrecting(offspring)
-            return offspring
-        else:
-            """对随机选取的片段进行全排列"""
-            parent = deepcopy(population[random_parent_index])
-            offsprings = np.empty(shape=(math.factorial(R), self.chromosome_size, 2)).astype(int)  # 用于存储变异得到的所有子代
-            for index, element in enumerate(permutations(parent[random_point:random_point + R])):
-                offspring[random_point:random_point + R] = list(element)
-                offsprings[index] = offspring
-            offsprings = self.populationCorrecting(offsprings)
-            project_start_time_list, project_end_time_list, fitness_array = self.getFitness(offsprings)
-            best_chromosome, _, _ = self.getBestChromosome(offsprings, fitness_array, project_end_time_list, 1)
-
-            return best_chromosome
+        mutation_offspring = self.mutationOperator(population, iterate_num)
+        return mutation_offspring
 
     def multiprocessMutation(self, population, iterate_count):
         print("变异多进程开始进行：")
@@ -716,7 +694,7 @@ class GA:
                             another_execute = True
 
                     # 通过外界输入来控制进程
-                    if iterate_count_all > 40:
+                    if iterate_count_all > 20:
                         key_board_input = input(
                             "按Enter结束GA运行，输出最终结果；按c终止本次GA运行，开启新一次的GA运行；否则继续运行：")
                         if key_board_input == '':

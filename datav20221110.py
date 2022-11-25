@@ -89,6 +89,9 @@ class Price:
         self.energy_price_evening = DATA.energy_price['晚班'][0]
         self.energy_price_night = DATA.energy_price['夜班'][0]
         self.energy_price = DATA.energy_price
+        self.labor_price_day = DATA.cost_for_procedure['白班'][1]
+        self.labor_price_evening = DATA.cost_for_procedure['晚班'][1]
+        self.labor_price_night = DATA.cost_for_procedure['夜班'][1]
 
     def getDateFactor(self, date):
         """获取某日期的日期价格因子"""
@@ -115,6 +118,9 @@ class CalculateUtils:
         self.evening_shift = IntervalSet.between("16:00", "22:00")  # 晚班
         self.night_shift0 = IntervalSet.between("22:00", "23:59")  # 夜班
         self.night_shift1 = IntervalSet.between("00:00", "06:00")  # 夜班
+        self.day_shift_labor = IntervalSet.between("08:00", "16:00")  # 人工白班
+        self.evening_shift_labor = IntervalSet.between("16:00", "23:59")  # 人工晚班
+        self.night_shift_labor = IntervalSet.between("00:00", "08:00")  # 人工夜班
 
     def getMachineEnergyConsume(self, Id, status):
         """获取某个机器在某状态下的能耗"""
@@ -125,25 +131,79 @@ class CalculateUtils:
         else:
             return self.DATA.machine_energy_consumption.loc[Id, "开机一次性能耗"]
 
+    @staticmethod
+    def getOverlapHours(query_duration, shift):
+        """获取某时间段在某个班次下的时长"""
+        overlap_duration = query_duration & shift
+        if overlap_duration:
+            upper = overlap_duration.upper_bound()
+            lower = overlap_duration.lower_bound()
+            duration_length = datetime.datetime.strptime(upper, "%H:%M") - \
+                              datetime.datetime.strptime(lower, "%H:%M")
+            if upper == '23:59':
+                hours = (duration_length.total_seconds() + 60) / 3600  # 加上23:59到0:00之间的1分钟
+            else:
+                hours = duration_length.total_seconds() / 3600
+        else:
+            hours = 0
+
+        return hours
+
+    def getLaborHours(self, duration_start_time, duration_end_time, shift_hour_dict):
+        # 转化时间为datetime.datetime类型
+        try:
+            duration_start_time = duration_start_time.astype(datetime.datetime)
+            duration_end_time = duration_end_time.astype(datetime.datetime)
+        except AttributeError:
+            duration_start_time = datetime.datetime.strptime(duration_start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                                             '%Y-%m-%d %H:%M:%S')
+            duration_end_time = datetime.datetime.strptime(duration_end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                                           '%Y-%m-%d %H:%M:%S')
+        start_date = duration_start_time.date()
+        end_date = duration_end_time.date()
+
+        if start_date == end_date:  # 该时间段在一天内
+            duration_start_time = duration_start_time.strftime("%H:%M")
+            duration_end_time = duration_end_time.strftime("%H:%M")
+            duration = IntervalSet.between(duration_start_time, duration_end_time)  # 当前时间段
+            day_hours = self.getOverlapHours(duration, self.day_shift_labor)
+            evening_hours = self.getOverlapHours(duration, self.evening_shift_labor)
+            night_hours = self.getOverlapHours(duration, self.night_shift_labor)
+            if start_date in shift_hour_dict:
+                shift_hour_dict[start_date]["day"] += day_hours
+                shift_hour_dict[start_date]["evening"] += evening_hours
+                shift_hour_dict[start_date]["night"] += night_hours
+            else:
+                shift_hour_dict[start_date] = {"day": day_hours,
+                                               "evening": evening_hours,
+                                               "night": night_hours}
+        else:  # 该时间段跨了多天
+            duration_start_time = duration_start_time.strftime("%H:%M")
+            duration_end_time = duration_end_time.strftime("%H:%M")
+            date = start_date
+            while date <= end_date:
+                if date == start_date:
+                    duration = IntervalSet.between(duration_start_time, "23:59")
+                elif date == end_date:
+                    duration = IntervalSet.between("00:00", duration_end_time)
+                else:
+                    duration = IntervalSet.between("00:00", "23:59")
+                day_hours = self.getOverlapHours(duration, self.day_shift_labor)
+                evening_hours = self.getOverlapHours(duration, self.evening_shift_labor)
+                night_hours = self.getOverlapHours(duration, self.night_shift_labor)
+                if date in shift_hour_dict:
+                    shift_hour_dict[date]["day"] += day_hours
+                    shift_hour_dict[date]["evening"] += evening_hours
+                    shift_hour_dict[date]["night"] += night_hours
+                else:
+                    shift_hour_dict[date] = {"day": day_hours,
+                                             "evening": evening_hours,
+                                             "night": night_hours}
+                date += datetime.timedelta(days=1)
+        return shift_hour_dict
+
     def getEnergyPrice(self, duration_start_time, duration_end_time):
         """获取当前时间段下的能耗价格*时长；如果两个时间相等，就是获取当前时间的能耗价格"""
-
-        def get_overlap_hours(query_duration, shift):
-            """获取某时间段在某个班次下的时长"""
-            overlap_duration = query_duration & shift
-            if overlap_duration:
-                upper = overlap_duration.upper_bound()
-                lower = overlap_duration.lower_bound()
-                duration_length = datetime.datetime.strptime(upper, "%H:%M") - \
-                                  datetime.datetime.strptime(lower, "%H:%M")
-                if upper == '23:59':
-                    hours = (duration_length.total_seconds() + 60) / 3600  # 加上23:59到0:00之间的1分钟
-                else:
-                    hours = duration_length.total_seconds() / 3600
-            else:
-                hours = 0
-
-            return hours
 
         if duration_start_time == 0:  # 意味着这个机器没有启用
             return 0
@@ -175,9 +235,10 @@ class CalculateUtils:
             duration_end_time = duration_end_time.strftime("%H:%M")
             duration = IntervalSet.between(duration_start_time, duration_end_time)  # 当前时间段
             date_factor = self.price.getDateFactor(start_date)
-            day_hours = get_overlap_hours(duration, self.day_shift)
-            evening_hours = get_overlap_hours(duration, self.evening_shift)
-            night_hours = get_overlap_hours(duration, self.night_shift0) + get_overlap_hours(duration, self.night_shift1)
+            day_hours = self.getOverlapHours(duration, self.day_shift)
+            evening_hours = self.getOverlapHours(duration, self.evening_shift)
+            night_hours = self.getOverlapHours(duration, self.night_shift0) + self.getOverlapHours(duration,
+                                                                                                   self.night_shift1)
             price = day_hours * self.price.energy_price_day + evening_hours * self.price.energy_price_evening + night_hours * self.price.energy_price_night
             total_price = price * date_factor
             return total_price
@@ -194,11 +255,13 @@ class CalculateUtils:
                     duration = IntervalSet.between("00:00", duration_end_time)
                 else:
                     duration = IntervalSet.between("00:00", "23:59")
-                day_hours = get_overlap_hours(duration, self.day_shift)
-                evening_hours = get_overlap_hours(duration, self.evening_shift)
-                night_hours = get_overlap_hours(duration, self.night_shift0) + get_overlap_hours(duration, self.night_shift1)
-                total_price += (day_hours * self.price.energy_price_day + evening_hours * self.price.energy_price_evening
-                                + night_hours * self.price.energy_price_night) * date_factor
+                day_hours = self.getOverlapHours(duration, self.day_shift)
+                evening_hours = self.getOverlapHours(duration, self.evening_shift)
+                night_hours = self.getOverlapHours(duration, self.night_shift0) + self.getOverlapHours(duration,
+                                                                                                       self.night_shift1)
+                total_price += (
+                                       day_hours * self.price.energy_price_day + evening_hours * self.price.energy_price_evening
+                                       + night_hours * self.price.energy_price_night) * date_factor
                 date += datetime.timedelta(days=1)
             return total_price
 
@@ -207,23 +270,6 @@ class CalculateUtils:
 
         def getEnergyPrice(duration_start_time, duration_end_time):
             """获取当前时间段下的能耗价格*时长；如果两个时间相等，就是获取当前时间的能耗价格"""
-
-            def get_overlap_hours(query_duration, shift):
-                """获取某时间段在某个班次下的时长"""
-                overlap_duration = query_duration & shift
-                if overlap_duration:
-                    upper = overlap_duration.upper_bound()
-                    lower = overlap_duration.lower_bound()
-                    duration_length = datetime.datetime.strptime(upper, "%H:%M") - \
-                                      datetime.datetime.strptime(lower, "%H:%M")
-                    if upper == '23:59':
-                        hours = (duration_length.total_seconds() + 60) / 3600  # 加上23:59到0:00之间的1分钟
-                    else:
-                        hours = duration_length.total_seconds() / 3600
-                else:
-                    hours = 0
-
-                return hours
 
             if duration_start_time == 0:  # 意味着这个机器没有启用
                 return 0
@@ -252,10 +298,10 @@ class CalculateUtils:
             elif start_date == end_date:
                 duration = IntervalSet.between(duration_start_time, duration_end_time)  # 当前时间段
                 date_factor = self.price.getDateFactor(start_date)
-                day_hours = get_overlap_hours(duration, self.day_shift)
-                evening_hours = get_overlap_hours(duration, self.evening_shift)
-                night_hours = get_overlap_hours(duration, self.night_shift0) + get_overlap_hours(duration,
-                                                                                                 self.night_shift1)
+                day_hours = self.getOverlapHours(duration, self.day_shift)
+                evening_hours = self.getOverlapHours(duration, self.evening_shift)
+                night_hours = self.getOverlapHours(duration, self.night_shift0) + self.getOverlapHours(duration,
+                                                                                                       self.night_shift1)
                 price = day_hours * self.price.energy_price_day + evening_hours * self.price.energy_price_evening + night_hours * self.price.energy_price_night
                 total_price = price * date_factor
                 return total_price
@@ -265,9 +311,9 @@ class CalculateUtils:
                 duration0 = IntervalSet.between(duration_start_time, "23:59")
                 duration1 = IntervalSet.between("00:00", duration_end_time)
                 '''由于一个duration（生产或空转）不会超过三小时，为了减少计算时间，只计算以下班次的重叠部分'''
-                evening_hours = get_overlap_hours(duration0, self.evening_shift)
-                night_hours0 = get_overlap_hours(duration0, self.night_shift0)
-                night_hours1 = get_overlap_hours(duration1, self.night_shift1)  # 第二天夜班的重叠时长
+                evening_hours = self.getOverlapHours(duration0, self.evening_shift)
+                night_hours0 = self.getOverlapHours(duration0, self.night_shift0)
+                night_hours1 = self.getOverlapHours(duration1, self.night_shift1)  # 第二天夜班的重叠时长
                 price0 = evening_hours * self.price.energy_price_evening + night_hours0 * self.price.energy_price_night  # 第一天
                 price1 = night_hours1 * self.price.energy_price_night  # 第二天
                 total_price = price0 * date_factor0 + price1 * date_factor1
@@ -319,6 +365,34 @@ class CalculateUtils:
 
         total_energy_cost += first_start_energy_cost.sum()
         return total_energy_cost
+
+    def getLaborCost(self, schedule_for_cal):  # TODO debug
+        schedule = schedule_for_cal[
+            (schedule_for_cal['Machine Status'] == '生产') | (schedule_for_cal['Machine Status'] == '空转')]
+        machine_list = schedule.Machine.unique()
+        total_labor_cost = 0
+        for machine_id in machine_list:  # 遍历所有用到的machine
+            shift_hours = {}
+            procedure_id = 0
+            for _, row in schedule[schedule['Machine'] == machine_id].iterrows():
+                start_time = row['Start Time']
+                end_time = row['End Time']
+                procedure_id = row['Procedure']
+                shift_hours = self.getLaborHours(start_time, end_time, shift_hours)
+            labor_cost_factor = self.DATA.cost_for_procedure.loc[procedure_id, '人工成本因子']
+            for shifts in shift_hours.values():  # 遍历该机器在某一天的加工时间
+                for shift in shifts.keys():  # 遍历该天的三个班段
+                    if 0 < shifts[shift] <= 4:
+                        shifts[shift] = 4
+                    elif shifts[shift] > 4:
+                        shifts[shift] = 8
+                    if shift == 'day':
+                        total_labor_cost += shifts[shift] * self.price.labor_price_day * labor_cost_factor
+                    elif shift == 'evening':
+                        total_labor_cost += shifts[shift] * self.price.labor_price_evening * labor_cost_factor
+                    else:
+                        total_labor_cost += shifts[shift] * self.price.labor_price_night * labor_cost_factor
+        return total_labor_cost
 
     @staticmethod
     def time_to_str(t):
