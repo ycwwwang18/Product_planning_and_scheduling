@@ -93,12 +93,16 @@ class Data:
         order1_columns = self.order1.columns
         self.order1.drop(columns=order1_columns[9:], inplace=True)
         self.order1["产品型号"] = self.order1.产品型号.map(lambda x: int(x[1:]))
+        self.order1["期望交期"] = self.order1.期望交期.map(lambda x: x+np.timedelta64(24, 'h'))
+        self.order1["最迟交期"] = self.order1.最迟交期.map(lambda x: x+np.timedelta64(24, 'h'))
         self.order1.set_index("订单编号", inplace=True)
 
         # 订单2
         order2_columns = self.order2.columns
         self.order2.drop(columns=order2_columns[9:], inplace=True)
         self.order2["产品型号"] = self.order2.产品型号.map(lambda x: int(x[1:]))
+        self.order2["期望交期"] = self.order2.期望交期.map(lambda x: x + np.timedelta64(24, 'h'))
+        self.order2["最迟交期"] = self.order2.最迟交期.map(lambda x: x + np.timedelta64(24, 'h'))
         self.order2.set_index("订单编号", inplace=True)
 
         # 产品类别-库存和延迟成本系数

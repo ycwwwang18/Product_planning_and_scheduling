@@ -17,18 +17,19 @@ mpl.rcParams['font.sans-serif'] = ['SimHei']
 class GA:
     """遗传算法类"""
 
-    def __init__(self, data, strategy, objective, population_size, crossover_rate, mutation_rate, select_rate,
+    def __init__(self, data, strategy, population_size, crossover_rate, mutation_rate, select_rate,
                  best_keep_num,
                  evolution_num, mutation_change_point):
         """
         :param data: 传入遗传算法的对应数据类GAData
         :param strategy: 启发式策略，编号
-        :param objective: 优化目标
         :param population_size: 种群规模
         :param crossover_rate: 交叉概率
         :param mutation_rate: 变异概率
         :param select_rate: 种群选择的比例
+        :param best_keep_num: 保留最优个体的数量
         :param evolution_num: 进化次数
+        :param mutation_change_point: 变异算子改变的时点
         """
 
         self.population_size = population_size  # 种群规模
@@ -38,7 +39,6 @@ class GA:
         self.best_keep_num = best_keep_num  # 最优保留的数量
         self.mutation_change_point = mutation_change_point
         self.evolution_num = evolution_num  # 进化次数
-        self.objective = objective  # 优化目标
         self.cal = CalculateUtils()
 
         if strategy == 1:  # 使用“同一产品类别一起加工”的策略
@@ -55,7 +55,7 @@ class GA:
         abs_path = os.path.abspath(__file__)
         _, filename = os.path.split(abs_path)
         filename = filename[:-3]
-        self.file_name = filename + f"Strategy{strategy}Obj{objective}PopulationSize{population_size}CR{crossover_rate}MR{mutation_rate}SR{select_rate}MCP{mutation_change_point}EvolutionNum{evolution_num}"
+        self.file_name = filename + f"Strategy{strategy}PopulationSize{population_size}CR{crossover_rate}MR{mutation_rate}SR{select_rate}MCP{mutation_change_point}EvolutionNum{evolution_num}"
 
     '''种群初始化'''
 
@@ -330,9 +330,9 @@ class GA:
         energy_cost = self.cal.getEnergyCost(schedule_dataframe_for_cal, machine_first_start_time)
         labor_cost = self.cal.getLaborCost(schedule_dataframe_for_cal)
         piece_cost = self.cal.piece_cost
-        hold_cost = self.cal.getHoldCost(schedule_dataframe, schedule_dataframe_for_cal)
-        objective_value = energy_cost + labor_cost + piece_cost + hold_cost
-        # print(f"energy_cost:{energy_cost}, labor_cost:{labor_cost}, hold_cost:{hold_cost}")
+        hold_cost = self.cal.getHoldCost(schedule_dataframe)
+        delay_cost = self.cal.getDelayCost(schedule_dataframe_for_cal)
+        objective_value = energy_cost + labor_cost + piece_cost + hold_cost + delay_cost
         return project_start_time, project_end_time, objective_value
 
     def getFitness(self, query_population):
@@ -340,14 +340,13 @@ class GA:
         fitness_list = []
         project_start_time_list = []
         project_end_time_list = []
-        if self.objective == 2:  # 能耗成本最小化
-            for i in range(len(query_population)):  # 遍历种群中的每个个体
-                # 对于一个新的个体，就要重置jobs和machines（latest end time，first start time），实例对象属性绑定
-                project_start_time, project_end_time, objective_value = self.getObjectiveValue(query_population[i])
-                fitness = 1 / objective_value
-                fitness_list.append(fitness)
-                project_start_time_list.append(project_start_time)
-                project_end_time_list.append(project_end_time)
+        for i in range(len(query_population)):  # 遍历种群中的每个个体
+            # 对于一个新的个体，就要重置jobs和machines（latest end time，first start time），实例对象属性绑定
+            project_start_time, project_end_time, objective_value = self.getObjectiveValue(query_population[i])
+            fitness = 1 / objective_value
+            fitness_list.append(fitness)
+            project_start_time_list.append(project_start_time)
+            project_end_time_list.append(project_end_time)
         fitness_array = np.array(fitness_list)
         return project_start_time_list, project_end_time_list, fitness_array
 

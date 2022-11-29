@@ -4,12 +4,6 @@ import pandas as pd
 from interval import IntervalSet
 from origindata import *
 
-"""
-更新说明：
-修改全局变量DATA的使用范围，python中的全局变量只是模块级别的，不可跨模块访问，因此将其作为参数传入。
-删掉dataGenerator()
-
-"""
 DATA = object()
 
 
@@ -422,27 +416,27 @@ class CalculateUtils:
             total_hold_time_of_category += hold_time_before_delivery
             total_hold_time_of_category = total_hold_time_of_category.sum()
             total_hold_cost += total_hold_time_of_category * self.DATA.cost_factor_for_category.loc[category_id, '仓储成本系数'] * self.price.hold_price  # 累加上该类别所有产品的库存成本
-        '''
-        schedule_item = schedule_item.assign(Item_ID=schedule_item['Order ID'] + ' ' + schedule_item['#'].map(str))
-        item_end_time = schedule_item.groupby('Item_ID', as_index=False)[['End Time', 'Category ID', 'Order ID']].max()  # 每个产品的完工时间
 
-        schedule_order = schedule_order[schedule_order['Machine Status'] == '生产']
-        order_end_time = schedule_order.groupby("Order ID")['End Time'].max()  # 每个订单的完工时间
-        order_end_time = item_end_time['Order ID'].map(lambda x: order_end_time.loc[x])  # 每个产品对应订单的完工时间
-        item_hold_cost_factor = item_end_time['Category ID'].map(lambda x: self.DATA.cost_factor_for_category.loc[x, '仓储成本系数'])  # 每个产品对应类别的仓储成本系数
-        # 将数据转化为ndarray格式，便于计算
-        item_end_time = item_end_time['End Time'].reset_index(drop=True)
-        order_end_time = order_end_time.reset_index(drop=True)
-        item_hold_cost_factor = np.array(item_hold_cost_factor)
-        # 计算产品完工后产生的库存成本
-        item_hold_time = order_end_time - item_end_time  # 产品完工后的滞留时间
-        item_hold_time = np.array(item_hold_time.map(lambda x: int(x.days)))  # 每满24h，算一天的库存成本
-        total_hold_cost += (item_hold_time @ item_hold_cost_factor) * self.price.hold_price
-        '''
         return total_hold_cost
 
     def getDelayCost(self, schedule_order):
         """计算当前调度表下的延迟成本"""
+        schedule_order = schedule_order[schedule_order['Machine Status'] == '生产']
+        order_end_time = schedule_order.groupby("Order ID")[['End Time', 'Category ID']].max()  # 每个订单的完工时间
+        order_num = self.DATA.order_table["数量"]
+        order_due_time = self.DATA.order_table["最迟交期"]
+        order_delay_time = order_end_time['End Time'] - order_due_time
+        order_delay_days = order_delay_time.map(lambda x: 0 if int(x.days) < 0 else int(x.days))
+        order_hold_cost_factor = order_end_time['Category ID'].map(
+            lambda x: self.DATA.cost_factor_for_category.loc[x, '订单延迟成本系数'])  # 每个产品对应类别的延迟成本系数
+
+        order_delay_days = np.array(order_delay_days)
+        order_num = np.array(order_num)
+        order_hold_cost_factor = np.array(order_hold_cost_factor)
+
+        total_delay_cost = (order_delay_days * order_num) @ order_hold_cost_factor * self.price.delay_price
+
+        return total_delay_cost
 
     @staticmethod
     def time_to_str(t):
