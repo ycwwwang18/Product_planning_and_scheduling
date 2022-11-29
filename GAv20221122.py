@@ -324,13 +324,15 @@ class GA:
 
     def getObjectiveValue(self, chromosome):
         """获取个体的目标值"""
-        _, _, schedule_dataframe_for_cal, machine_first_start_time = self.decodeChromosome(chromosome)
+        _, schedule_dataframe, schedule_dataframe_for_cal, machine_first_start_time = self.decodeChromosome(chromosome)
         project_start_time = schedule_dataframe_for_cal['Start Time'].min()
         project_end_time = schedule_dataframe_for_cal['End Time'].max()
         energy_cost = self.cal.getEnergyCost(schedule_dataframe_for_cal, machine_first_start_time)
         labor_cost = self.cal.getLaborCost(schedule_dataframe_for_cal)
         piece_cost = self.cal.piece_cost
-        objective_value = energy_cost + labor_cost + piece_cost
+        hold_cost = self.cal.getHoldCost(schedule_dataframe, schedule_dataframe_for_cal)
+        objective_value = energy_cost + labor_cost + piece_cost + hold_cost
+        # print(f"energy_cost:{energy_cost}, labor_cost:{labor_cost}, hold_cost:{hold_cost}")
         return project_start_time, project_end_time, objective_value
 
     def getFitness(self, query_population):

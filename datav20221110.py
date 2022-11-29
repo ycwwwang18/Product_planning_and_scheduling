@@ -1,3 +1,6 @@
+import copy
+import numpy as np
+import pandas as pd
 from interval import IntervalSet
 from origindata import *
 
@@ -92,6 +95,8 @@ class Price:
         self.labor_price_day = DATA.cost_for_procedure['白班'][1]
         self.labor_price_evening = DATA.cost_for_procedure['晚班'][1]
         self.labor_price_night = DATA.cost_for_procedure['夜班'][1]
+        self.hold_price = 100  # 库存成本为100/天
+        self.delay_price = 100  # 延迟成本为100/天
 
     def getDateFactor(self, date):
         """获取某日期的日期价格因子"""
@@ -210,14 +215,8 @@ class CalculateUtils:
             return 0
 
         # 将时间转化为datetime.datetime类型
-        try:
-            duration_start_time = duration_start_time.astype(datetime.datetime)
-            duration_end_time = duration_end_time.astype(datetime.datetime)
-        except AttributeError:
-            duration_start_time = datetime.datetime.strptime(duration_start_time.strftime('%Y-%m-%d %H:%M:%S'),
-                                                             '%Y-%m-%d %H:%M:%S')
-            duration_end_time = datetime.datetime.strptime(duration_end_time.strftime('%Y-%m-%d %H:%M:%S'),
-                                                           '%Y-%m-%d %H:%M:%S')
+        duration_start_time = self.toDatetime(duration_start_time)
+        duration_end_time = self.toDatetime(duration_end_time)
 
         start_date = duration_start_time.date()
         end_date = duration_end_time.date()
@@ -267,7 +266,7 @@ class CalculateUtils:
             return total_price
 
     def getEnergyCostFromSchedule(self, schedule, machine_first_start_time):
-        """获得某个调度表下的能耗成本"""
+        """基于schedule计算能耗成本"""
 
         def getEnergyPrice(duration_start_time, duration_end_time):
             """获取当前时间段下的能耗价格*时长；如果两个时间相等，就是获取当前时间的能耗价格"""
@@ -344,6 +343,7 @@ class CalculateUtils:
         return total_energy_cost
 
     def getEnergyCost(self, schedule_for_cal, machine_first_start_time):
+        """基于schedule_for_cal计算能耗成本"""
         total_energy_cost = 0
         machine_first_start_price = np.zeros(shape=self.DATA.machine_num)  # 机器第一次开机时的能耗价格
 
@@ -367,7 +367,8 @@ class CalculateUtils:
         total_energy_cost += first_start_energy_cost.sum()
         return total_energy_cost
 
-    def getLaborCost(self, schedule_for_cal):  # TODO debug
+    def getLaborCost(self, schedule_for_cal):
+        """计算当前调度表下的人工成本"""
         schedule = schedule_for_cal[
             (schedule_for_cal['Machine Status'] == '生产') | (schedule_for_cal['Machine Status'] == '空转')]
         machine_list = schedule.Machine.unique()
@@ -395,6 +396,54 @@ class CalculateUtils:
                         total_labor_cost += shifts[shift] * self.price.labor_price_night * labor_cost_factor
         return total_labor_cost
 
+    def getHoldCost(self, schedule_item):
+        """计算当前调度表下的库存成本"""
+        schedule_item = schedule_item[schedule_item['Machine Status'] == '生产']
+        total_hold_cost = 0
+        for category_id, category_group in schedule_item.groupby('Category ID'):  # 遍历某一类产品
+            procedure_end_time = 0
+            total_hold_time_of_category = []  # 该类别下所有产品的总库存时间
+            for procedure, procedure_group in category_group.groupby('Procedure'):  # 遍历该类产品的各道工序
+                procedure_start_time = procedure_group['Start Time'].map(self.toDatetime)
+                if isinstance(procedure_end_time, pd.Series):
+                    procedure_start_time = procedure_start_time.reset_index(drop=True)
+                    procedure_end_time = procedure_end_time.reset_index(drop=True)
+                    hold_time_before_this_procedure = procedure_start_time - procedure_end_time  # 计算各工序前的产品滞留时间
+                    hold_time_before_this_procedure = np.array(hold_time_before_this_procedure.map(lambda x: int(x.days)))  # 每满24h，算一天的库存成本
+                    if len(total_hold_time_of_category) == 0:
+                        total_hold_time_of_category = hold_time_before_this_procedure
+                    else:
+                        total_hold_time_of_category += hold_time_before_this_procedure
+                procedure_end_time = procedure_group['End Time'].map(self.toDatetime)
+
+            procedure_end_time = procedure_end_time.reset_index(drop=True)
+            hold_time_before_delivery = procedure_end_time.map(lambda x: procedure_end_time.max()-x)  # 产品完工后到发货前的库存时间
+            hold_time_before_delivery = np.array(hold_time_before_delivery.map(lambda x: int(x.days)))
+            total_hold_time_of_category += hold_time_before_delivery
+            total_hold_time_of_category = total_hold_time_of_category.sum()
+            total_hold_cost += total_hold_time_of_category * self.DATA.cost_factor_for_category.loc[category_id, '仓储成本系数'] * self.price.hold_price  # 累加上该类别所有产品的库存成本
+        '''
+        schedule_item = schedule_item.assign(Item_ID=schedule_item['Order ID'] + ' ' + schedule_item['#'].map(str))
+        item_end_time = schedule_item.groupby('Item_ID', as_index=False)[['End Time', 'Category ID', 'Order ID']].max()  # 每个产品的完工时间
+
+        schedule_order = schedule_order[schedule_order['Machine Status'] == '生产']
+        order_end_time = schedule_order.groupby("Order ID")['End Time'].max()  # 每个订单的完工时间
+        order_end_time = item_end_time['Order ID'].map(lambda x: order_end_time.loc[x])  # 每个产品对应订单的完工时间
+        item_hold_cost_factor = item_end_time['Category ID'].map(lambda x: self.DATA.cost_factor_for_category.loc[x, '仓储成本系数'])  # 每个产品对应类别的仓储成本系数
+        # 将数据转化为ndarray格式，便于计算
+        item_end_time = item_end_time['End Time'].reset_index(drop=True)
+        order_end_time = order_end_time.reset_index(drop=True)
+        item_hold_cost_factor = np.array(item_hold_cost_factor)
+        # 计算产品完工后产生的库存成本
+        item_hold_time = order_end_time - item_end_time  # 产品完工后的滞留时间
+        item_hold_time = np.array(item_hold_time.map(lambda x: int(x.days)))  # 每满24h，算一天的库存成本
+        total_hold_cost += (item_hold_time @ item_hold_cost_factor) * self.price.hold_price
+        '''
+        return total_hold_cost
+
+    def getDelayCost(self, schedule_order):
+        """计算当前调度表下的延迟成本"""
+
     @staticmethod
     def time_to_str(t):
         """把python的时间（如datetime64、Timestamp）转化为字符串"""
@@ -404,6 +453,15 @@ class CalculateUtils:
             return t.strftime('%Y%m%d%H%M%S')
         except ValueError:
             print(ValueError)
+
+    @staticmethod
+    def toDatetime(time):
+        """将时间转化为datetime.datetime类型"""
+        try:
+            new_time = time.astype(datetime.datetime)
+        except AttributeError:
+            new_time = datetime.datetime.strptime(time.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S')
+        return new_time
 
 
 class GAData:
