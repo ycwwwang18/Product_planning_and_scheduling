@@ -55,7 +55,7 @@ class GA:
         abs_path = os.path.abspath(__file__)
         _, filename = os.path.split(abs_path)
         filename = filename[:-3]
-        self.file_name = filename + f"Strategy{strategy}PopulationSize{population_size}CR{crossover_rate}MR{mutation_rate}SR{select_rate}MCP{mutation_change_point}EvolutionNum{evolution_num}"
+        self.file_name = filename + f"Strategy{strategy}PopulationSize{population_size}CR{crossover_rate}MR{mutation_rate}SR{select_rate}BN{best_keep_num}MCP{mutation_change_point}EvolutionNum{evolution_num}"
 
     '''种群初始化'''
 
@@ -459,7 +459,7 @@ class GA:
             best_chromosome, _, _, _ = self.getBestChromosome(offsprings, fitness_array, project_end_time_list, cost_list, 1)
             return best_chromosome
 
-    def mutation(self, population, iterate_num):
+    def mutationPopulation(self, population, iterate_num):
         """种群变异"""
         mutation_num = int(self.mutation_rate * self.population_size)
         offspring_population = []
@@ -489,7 +489,6 @@ class GA:
     '''结果输出'''
 
     def resultExport(self, schedule, fitness, costs, obj_val, end):
-        save_file = False
 
         def exportSchedule():
             """调度表"""
@@ -500,35 +499,49 @@ class GA:
         def plotFitnessEvolution():
             """目标值迭代曲线"""
             evolution_path = "进化.png"
-            y_value = fitness
+            # 准备用于作图的数据
+            y_total = fitness
             energy_cost, labor_cost, piece_cost, hold_cost, delay_cost = zip(*costs)
             y_energy = list(energy_cost)
             y_labor = list(labor_cost)
-            y_piece = list(piece_cost)
             y_hold = list(hold_cost)
             y_delay = list(delay_cost)
-            len_y = len(y_value)
+            len_y = len(y_total)
             x_value = [i for i in range(1, len_y + 1)]
 
-            x_major_locator = MultipleLocator(10)
-            ax = plt.gca()  # 获取轴
-            ax.xaxis.set_major_locator(x_major_locator)
-            plt.xticks(x_value, x_value)
-            plt.margins(0)
-            plt.xlabel(u"迭代次数")
-            plt.ylabel(u"成本")
-            plt.title("成本迭代曲线")
-            # plt.rcParams['figure.figsize'] = (200.0, 100.0)
-            plt.plot(x_value, y_value)
-            plt.plot(x_value, y_energy)
-            plt.plot(x_value, y_labor)
-            plt.plot(x_value, y_piece)
-            plt.plot(x_value, y_hold)
-            plt.plot(x_value, y_delay)
-            plt.legend(['总成本', '能耗成本', '人工成本', '计件成本', '库存成本', '延迟成本'], loc='upper right')
+            plt.figure(figsize=[18, 9], constrained_layout=True)
+            ax_total = plt.subplot2grid((2, 4), (0, 0), rowspan=2, colspan=2)
+            ax_energy = plt.subplot2grid((2, 4), (0, 2))
+            ax_labor = plt.subplot2grid((2, 4), (0, 3))
+            ax_hold = plt.subplot2grid((2, 4), (1, 2))
+            ax_delay = plt.subplot2grid((2, 4), (1, 3))
+            ax_total.plot(x_value, y_total)
+            ax_energy.plot(x_value, y_energy)
+            ax_labor.plot(x_value, y_labor)
+            ax_hold.plot(x_value, y_hold)
+            ax_delay.plot(x_value, y_delay)
+            ax_total.set_title("总成本")
+            ax_energy.set_title("能耗成本")
+            ax_labor.set_title("人工成本")
+            ax_hold.set_title("库存成本")
+            ax_delay.set_title("延迟成本")
+            plt.suptitle("成本迭代曲线")
+            ax_total.set_xlabel(u"迭代次数")
+            ax_total.set_ylabel(u"成本")
+            ax_energy.set_xlabel(u"迭代次数")
+            ax_energy.set_ylabel(u"成本")
+            ax_labor.set_xlabel(u"迭代次数")
+            ax_labor.set_ylabel(u"成本")
+            ax_hold.set_xlabel(u"迭代次数")
+            ax_hold.set_ylabel(u"成本")
+            ax_delay.set_xlabel(u"迭代次数")
+            ax_delay.set_ylabel(u"成本")
+            plt.rcParams['axes.unicode_minus'] = False
+
             # 先保存再show，否则保存的图片可能是空白的
+            plt.tight_layout()
             if save_file:
-                plt.savefig(result_folder_path + '\\' + evolution_path)  # 算法、策略
+                plt.savefig(result_folder_path + '\\' + evolution_path, dpi=600)  # 算法、策略
             plt.show()
 
         def plotGantt():
@@ -567,20 +580,20 @@ class GA:
                 plotly.offline.plot(fig, filename=result_folder_path + '\\' + gantt_html_path)
             fig.show()
 
+        save_file = True
         obj_val = int(obj_val)
         end = end.strftime('%Y-%m-%d %H:%M')
         folder_path = "C:\\Users\\ejauxue002\\Nutstore\\1\\Q2\\排程优化-20221010\\实验结果记录"
         result_folder_path = folder_path + '\\' + self.file_name
         if os.path.exists(folder_path):
+            save_file = True
             try:
                 os.mkdir(result_folder_path)
             except FileExistsError:
                 while os.path.exists(result_folder_path):
                     result_folder_path = result_folder_path + '_1'
                 os.mkdir(result_folder_path)
-            exportSchedule()
-            plotFitnessEvolution()
-            plotGantt()
+        else: save_file = False
         exportSchedule()
         plotFitnessEvolution()
         plotGantt()
@@ -617,6 +630,14 @@ class GA:
         mutation_population = np.array(mutation_results[0])
         return mutation_population
 
+    def mutation(self, population, iterate_num):
+        """整合多进程和单进程的变异"""
+        if iterate_num > self.mutation_change_point:
+            mutation_offspring = self.mutationPopulation(population, iterate_num)
+        else:
+            mutation_offspring = self.multiprocessMutation(population, iterate_num)
+        return mutation_offspring
+
     def execute(self):
         """执行GA"""
         obj_evolution = []  # 记录每一代的最优目标值
@@ -651,8 +672,7 @@ class GA:
                                                                                                     project_end_time,
                                                                                                     cost_list,
                                                                                                     self.best_keep_num)
-            print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (
-                iterate_count, best_objective_value[0], best_end[0]))
+            print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (iterate_count, best_objective_value[0], best_end[0]))
             iterate_count += 1
 
             #############进行若干次进化#############
@@ -664,7 +684,11 @@ class GA:
 
                 ######################交叉和变异#####################
                 crossover_population = self.crossOver(population)
-                mutation_population = self.multiprocessMutation(population, iterate_count)
+                mutation_start_time = time.time()
+                mutation_population = self.mutation(population, iterate_count)
+                mutation_end_time = time.time()
+                mutation_duration_time = (mutation_end_time-mutation_start_time) / 60
+                print(f"变异耗时{mutation_duration_time}分钟。")
                 offspring_population = np.vstack((crossover_population, mutation_population))
 
                 ####################种群适应度计算####################
@@ -713,7 +737,7 @@ class GA:
                             another_execute = True
 
                     # 通过外界输入来控制进程
-                    if iterate_count_all > 20:
+                    if iterate_count_all > 40:
                         key_board_input = input(
                             "按Enter结束GA运行，输出最终结果；按c终止本次GA运行，开启新一次的GA运行；否则继续运行：")
                         if key_board_input == '':
