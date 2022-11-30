@@ -87,7 +87,7 @@ class GA:
 
     '''解码：①调度表，②目标值'''
 
-    def decodeJob(self, is_first_job_of_machine, machine_id, job_id, result):
+    def decodeJob(self, is_first_job_of_machine, machine_id, job_id):
         """对某机器上的任务进行解码"""
 
         # 数据准备
@@ -123,15 +123,30 @@ class GA:
 
         def linesAppend(status, start_time, end_time, category_ID, order_ID, product_ID, num_index):
             """往结果中增添一行"""
-            start_time_list.append(start_time)
-            end_time_list.append(end_time)
-            machine_list.append(machine_id)
-            machine_status_list.append(status)
-            procedure_list.append(this_procedure)
-            category_id_list.append(category_ID)
-            order_id_list.append(order_ID)
-            product_id_list.append(product_ID)
-            num_list.append(num_index)
+            if isinstance(start_time, list):
+                num = len(start_time)
+            else:
+                num = 1
+                start_time = [start_time]
+                end_time = [end_time]
+                num_index = [num_index]
+
+            status = [status] * num
+            category_ID = [category_ID] * num
+            order_ID = [order_ID] * num
+            product_ID = [product_ID] * num
+            machine = [machine_id] * num
+            procedure = [this_procedure] * num
+
+            start_time_list.extend(start_time)
+            end_time_list.extend(end_time)
+            machine_list.extend(machine)
+            machine_status_list.extend(status)
+            procedure_list.extend(procedure)
+            category_id_list.extend(category_ID)
+            order_id_list.extend(order_ID)
+            product_id_list.extend(product_ID)
+            num_list.extend(num_index)
 
         def linesAppendForCal(status, start_time, end_time, category_ID, order_ID, product_ID):
             """往结果中增添一行"""
@@ -145,45 +160,27 @@ class GA:
             product_id_list_for_cal.append(product_ID)
 
         def saveSegment(start_time, end_time, status, this_order, product_ID):
+            def getItemStartEndTime(index):
+                item_start_time_ = start_time + index * processing_time
+                item_end_time_ = start_time + (index + 1) * processing_time
+                return item_start_time_, item_end_time_
+
             if status == "生产":
                 this_order_id = this_order.order_id
-                for item_index in range(this_order.product_number):
-                    item_start_time = start_time + item_index * processing_time
-                    item_end_time = start_time + (item_index + 1) * processing_time
-                    job_segment = {
-                        "start": self.cal.time_to_str(item_start_time),
-                        "end": self.cal.time_to_str(item_end_time),
-                        "val": [20, this_order_id, product_ID, item_index + 1]
-                    }
-                    result[machine_id - 1]["data"].append(job_segment)
-                    linesAppend('生产', item_start_time, item_end_time, job_id, this_order_id, product_ID,
-                                item_index + 1)
+                item_index = list(range(this_order.product_number))
+                item_start_end_time = list(map(getItemStartEndTime, item_index))
+                item_start_time, item_end_time = zip(*item_start_end_time)
+                item_start_time = list(item_start_time)
+                item_end_time = list(item_end_time)
+                linesAppend("生产", item_start_time, item_end_time, job_id, this_order_id, product_ID, item_index)
                 linesAppendForCal('生产', start_time, end_time, job_id, this_order_id, product_ID)
             elif status == "维保":
-                job_segment_maintenance = {
-                    "start": self.cal.time_to_str(start_time),
-                    "end": self.cal.time_to_str(end_time),
-                    "val": [1]
-                }
-                result[machine_id - 1]["data"].append(job_segment_maintenance)
                 linesAppend('维保', start_time, end_time, '维保', '', '', '')
                 linesAppendForCal('维保', start_time, end_time, '维保', '', '')
             elif status == "停机":
-                job_segment_shutdown = {
-                    "start": self.cal.time_to_str(start_time),
-                    "end": self.cal.time_to_str(end_time),
-                    "val": [0]
-                }
-                result[machine_id - 1]["data"].append(job_segment_shutdown)
                 linesAppend('停机', start_time, end_time, '停机', '', '', '')
                 linesAppendForCal('停机', start_time, end_time, '停机', '', '')
             elif status == "空转":
-                job_segment_idle = {
-                    "start": self.cal.time_to_str(start_time),
-                    "end": self.cal.time_to_str(end_time),
-                    "val": [10]
-                }
-                result[machine_id - 1]["data"].append(job_segment_idle)
                 linesAppend('空转', start_time, end_time, '空转', '', '', '')
                 linesAppendForCal('空转', start_time, end_time, '空转', '', '')
 
@@ -277,13 +274,12 @@ class GA:
         result_df_for_cal.columns = ['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID',
                                      'Order ID',
                                      'Product ID']
-        return result, result_df, result_df_for_cal
+        return result_df, result_df_for_cal
 
     def decodeChromosome(self, chromosome):
         """对染色体进行解码，返回调度表，以及机器第一次开机时间"""
 
         # 数据准备
-        result_schedule = []  # 调度表
         schedule_df = pd.DataFrame(
             columns=['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID', 'Order ID',
                      'Product ID',
@@ -291,12 +287,6 @@ class GA:
         schedule_df_for_cal = pd.DataFrame(
             columns=['Machine', 'Start Time', 'End Time', 'Machine Status', 'Procedure', 'Category ID', 'Order ID',
                      'Product ID'])  # dataframe格式的结果
-        for i in range(self.machine_num):
-            shop = {
-                "name": "Shop" + str(i + 1),
-                "data": []
-            }
-            result_schedule.append(shop)
         job_count_of_machine = [0] * self.machine_num  # 用于计算某机器上job的累计个数
         machine_first_start_time = []  # 机器第一次开机时间
 
@@ -305,11 +295,9 @@ class GA:
             machine_id = chromosome[i][1]  # 机器编号
             job_count_of_machine[machine_id - 1] += 1
             if job_count_of_machine[machine_id - 1] == 1:  # 该job是这个机器上的第一个加工任务
-                result_schedule, result_df, result_df_for_cal = \
-                    self.decodeJob(1, machine_id, job_id, result_schedule)
+                result_df, result_df_for_cal = self.decodeJob(1, machine_id, job_id)
             else:
-                result_schedule, result_df, result_df_for_cal = \
-                    self.decodeJob(0, machine_id, job_id, result_schedule)
+                result_df, result_df_for_cal = self.decodeJob(0, machine_id, job_id)
             schedule_df = pd.concat([schedule_df, result_df])
             schedule_df_for_cal = pd.concat([schedule_df_for_cal, result_df_for_cal])
 
@@ -320,12 +308,11 @@ class GA:
         self.data.resetJob(self.jobs)
         schedule_df.index = [_ for _ in range(schedule_df.shape[0])]
         schedule_df_for_cal.index = [_ for _ in range(schedule_df_for_cal.shape[0])]
-        return result_schedule, schedule_df, schedule_df_for_cal, machine_first_start_time
+        return schedule_df, schedule_df_for_cal, machine_first_start_time
 
     def getObjectiveValue(self, chromosome):
         """获取个体的目标值"""
-        _, schedule_dataframe, schedule_dataframe_for_cal, machine_first_start_time = self.decodeChromosome(chromosome)
-        project_start_time = schedule_dataframe_for_cal['Start Time'].min()
+        schedule_dataframe, schedule_dataframe_for_cal, machine_first_start_time = self.decodeChromosome(chromosome)
         project_end_time = schedule_dataframe_for_cal['End Time'].max()
         energy_cost = self.cal.getEnergyCost(schedule_dataframe_for_cal, machine_first_start_time)
         labor_cost = self.cal.getLaborCost(schedule_dataframe_for_cal)
@@ -333,32 +320,33 @@ class GA:
         hold_cost = self.cal.getHoldCost(schedule_dataframe)
         delay_cost = self.cal.getDelayCost(schedule_dataframe_for_cal)
         objective_value = energy_cost + labor_cost + piece_cost + hold_cost + delay_cost
-        return project_start_time, project_end_time, objective_value
+        return project_end_time, objective_value, [energy_cost, labor_cost, piece_cost, hold_cost, delay_cost]
 
     def getFitness(self, query_population):
         """获取种群的适应度，返回适应度的array"""
         fitness_list = []
-        project_start_time_list = []
         project_end_time_list = []
+        cost_list = []
         for i in range(len(query_population)):  # 遍历种群中的每个个体
             # 对于一个新的个体，就要重置jobs和machines（latest end time，first start time），实例对象属性绑定
-            project_start_time, project_end_time, objective_value = self.getObjectiveValue(query_population[i])
+            project_end_time, objective_value, costs = self.getObjectiveValue(query_population[i])
             fitness = 1 / objective_value
             fitness_list.append(fitness)
-            project_start_time_list.append(project_start_time)
             project_end_time_list.append(project_end_time)
+            cost_list.append(costs)
         fitness_array = np.array(fitness_list)
-        return project_start_time_list, project_end_time_list, fitness_array
+        return project_end_time_list, fitness_array, cost_list
 
     @staticmethod
-    def getBestChromosome(population, fitness_array, project_end_time_list, best_num):
+    def getBestChromosome(population, fitness_array, project_end_time_list, cost_list, best_num):
         """获取种群中若干个的最好个体，最优目标值，最优结束时间和最优调度表"""
         sort_index = np.argsort(-fitness_array)
         best_chromosomes = population[sort_index][:best_num]
         best_objective_value = np.reciprocal(fitness_array[sort_index][:best_num])
         best_end_time = np.array(project_end_time_list)[sort_index][:best_num]
+        best_cost = np.array(cost_list)[sort_index][:best_num]
 
-        return best_chromosomes, best_objective_value, best_end_time
+        return best_chromosomes, best_objective_value, best_end_time, best_cost
 
     '''约束条件检查'''
 
@@ -467,8 +455,8 @@ class GA:
                 offspring[random_point:random_point + R] = list(element)
                 offsprings[index] = offspring
             offsprings = self.populationCorrecting(offsprings)
-            project_start_time_list, project_end_time_list, fitness_array = self.getFitness(offsprings)
-            best_chromosome, _, _ = self.getBestChromosome(offsprings, fitness_array, project_end_time_list, 1)
+            project_end_time_list, fitness_array, cost_list = self.getFitness(offsprings)
+            best_chromosome, _, _, _ = self.getBestChromosome(offsprings, fitness_array, project_end_time_list, cost_list, 1)
             return best_chromosome
 
     def mutation(self, population, iterate_num):
@@ -500,29 +488,47 @@ class GA:
 
     '''结果输出'''
 
-    def resultExport(self, schedule, fitness, obj_val, end):
+    def resultExport(self, schedule, fitness, costs, obj_val, end):
+        save_file = False
+
         def exportSchedule():
             """调度表"""
             schedule_path = "调度表.xlsx"
-            schedule.to_excel(result_folder_path + '\\' + schedule_path)
+            if save_file:
+                schedule.to_excel(result_folder_path + '\\' + schedule_path)
 
         def plotFitnessEvolution():
             """目标值迭代曲线"""
             evolution_path = "进化.png"
             y_value = fitness
+            energy_cost, labor_cost, piece_cost, hold_cost, delay_cost = zip(*costs)
+            y_energy = list(energy_cost)
+            y_labor = list(labor_cost)
+            y_piece = list(piece_cost)
+            y_hold = list(hold_cost)
+            y_delay = list(delay_cost)
             len_y = len(y_value)
             x_value = [i for i in range(1, len_y + 1)]
-            plt.plot(x_value, y_value)
+
             x_major_locator = MultipleLocator(10)
             ax = plt.gca()  # 获取轴
             ax.xaxis.set_major_locator(x_major_locator)
             plt.xticks(x_value, x_value)
             plt.margins(0)
             plt.xlabel(u"迭代次数")
-            plt.ylabel(u"目标值")
-            plt.title("目标值迭代曲线")
+            plt.ylabel(u"成本")
+            plt.title("成本迭代曲线")
+            # plt.rcParams['figure.figsize'] = (200.0, 100.0)
+            plt.plot(x_value, y_value)
+            plt.plot(x_value, y_energy)
+            plt.plot(x_value, y_labor)
+            plt.plot(x_value, y_piece)
+            plt.plot(x_value, y_hold)
+            plt.plot(x_value, y_delay)
+            plt.legend(['总成本', '能耗成本', '人工成本', '计件成本', '库存成本', '延迟成本'], loc='upper right')
             # 先保存再show，否则保存的图片可能是空白的
-            plt.savefig(result_folder_path + '\\' + evolution_path)  # 算法、策略
+            if save_file:
+                plt.savefig(result_folder_path + '\\' + evolution_path)  # 算法、策略
             plt.show()
 
         def plotGantt():
@@ -556,8 +562,9 @@ class GA:
                                y=1,
                                yanchor='bottom',
                                bgcolor='white')
-            fig.write_image(result_folder_path + '\\' + gantt_png_path, width=2000, height=1000)
-            plotly.offline.plot(fig, filename=result_folder_path + '\\' + gantt_html_path)
+            if save_file:
+                fig.write_image(result_folder_path + '\\' + gantt_png_path, width=2000, height=1000)
+                plotly.offline.plot(fig, filename=result_folder_path + '\\' + gantt_html_path)
             fig.show()
 
         obj_val = int(obj_val)
@@ -574,14 +581,17 @@ class GA:
             exportSchedule()
             plotFitnessEvolution()
             plotGantt()
+        exportSchedule()
+        plotFitnessEvolution()
+        plotGantt()
 
     '''多进程'''
 
     def decodeChildTask(self, chromosome):
         """用于多进程解码的实现，个体的解码函数"""
         print("\033[1;32m", "█", "\033[0m", sep="", end="")
-        project_start_time, project_end_time, objective_value = self.getObjectiveValue(chromosome)
-        return project_start_time, project_end_time, 1 / objective_value
+        project_end_time, objective_value, costs = self.getObjectiveValue(chromosome)
+        return project_end_time, 1 / objective_value, costs
 
     def multiprocessDecode(self, population, iterate_count):
         """多进程解码"""
@@ -589,8 +599,8 @@ class GA:
         decode_multiprocess = Multiprocess()
         decode_args = zip(population)
         decode_results = decode_multiprocess.work(self.decodeChildTask, decode_args, iterate_count)
-        fitness_array = np.array(decode_results[2])  # 把适应度list转化为array
-        return decode_results[1], fitness_array
+        fitness_array = np.array(decode_results[1])  # 把适应度list转化为array
+        return decode_results[0], fitness_array, decode_results[2]
 
     def mutationChildTask(self, population, iterate_num):
         """用于多进程变异的实现，种群变异函数"""
@@ -609,10 +619,12 @@ class GA:
 
     def execute(self):
         """执行GA"""
-        fitness_evolution = []  # 记录每一代的最优目标值
+        obj_evolution = []  # 记录每一代的最优目标值
+        cost_evolution = []  # 记录每一代的最优成本
         best_chromosome = []  # 记录当前的最优个体
         best_objective_value = 0  # 记录当前的最优目标值
         best_end = 0  # 记录当前的最优完工时间
+        best_cost = []  # 记录当前的最优的各项成本
         execute_flag = True
         execute_count = 1
         iterate_count_all = 1  # 记录总的迭代次数
@@ -625,17 +637,20 @@ class GA:
 
             ##############生成初始种群#############
             population = self.initialPopulation(self.population_size)
-            project_end_time, fitness_array = self.multiprocessDecode(population, iterate_count)
+            project_end_time, fitness_array, cost_list = self.multiprocessDecode(population, iterate_count)
             if isinstance(best_chromosome, np.ndarray):
-                best_chromosome, best_objective_value, best_end = self.getBestChromosome(
+                best_chromosome, best_objective_value, best_end, best_cost = self.getBestChromosome(
                     np.vstack((population, best_chromosome)),
                     np.append(fitness_array, 1 / best_objective_value, axis=0),
                     np.append(project_end_time, best_end, axis=0),
+                    np.append(cost_list, best_cost, axis=0),
                     self.best_keep_num)
             else:
-                best_chromosome, best_objective_value, best_end = self.getBestChromosome(population, fitness_array,
-                                                                                         project_end_time,
-                                                                                         self.best_keep_num)
+                best_chromosome, best_objective_value, best_end, best_cost = self.getBestChromosome(population,
+                                                                                                    fitness_array,
+                                                                                                    project_end_time,
+                                                                                                    cost_list,
+                                                                                                    self.best_keep_num)
             print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (
                 iterate_count, best_objective_value[0], best_end[0]))
             iterate_count += 1
@@ -653,16 +668,18 @@ class GA:
                 offspring_population = np.vstack((crossover_population, mutation_population))
 
                 ####################种群适应度计算####################
-                project_end_time, fitness_array = self.multiprocessDecode(offspring_population, iterate_count)
+                project_end_time, fitness_array, cost_list = self.multiprocessDecode(offspring_population, iterate_count)
 
                 ####################更新种群优秀个体###################
-                best_chromosome, best_objective_value, best_end = self.getBestChromosome(
+                best_chromosome, best_objective_value, best_end, best_cost = self.getBestChromosome(
                     np.vstack((offspring_population, best_chromosome)),
                     np.append(fitness_array, 1 / best_objective_value, axis=0),
                     np.append(project_end_time, best_end, axis=0),
+                    np.append(cost_list, best_cost, axis=0),
                     self.best_keep_num)
                 # 记录本代的最优目标值
-                fitness_evolution.append(best_objective_value[0])
+                obj_evolution.append(best_objective_value[0])
+                cost_evolution.append(best_cost[0])
                 print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (
                     iterate_count, best_objective_value[0], best_end[0]))
 
@@ -679,11 +696,11 @@ class GA:
                         iterate_flag = False
                         another_execute = False
                     elif iterate_count_all > 6:
-                        best_obj_1 = fitness_evolution[iterate_count_all - 2]
-                        best_obj_2 = fitness_evolution[iterate_count_all - 3]
-                        best_obj_3 = fitness_evolution[iterate_count_all - 4]
-                        best_obj_4 = fitness_evolution[iterate_count_all - 5]
-                        best_obj_5 = fitness_evolution[iterate_count_all - 6]
+                        best_obj_1 = obj_evolution[iterate_count_all - 2]
+                        best_obj_2 = obj_evolution[iterate_count_all - 3]
+                        best_obj_3 = obj_evolution[iterate_count_all - 4]
+                        best_obj_4 = obj_evolution[iterate_count_all - 5]
+                        best_obj_5 = obj_evolution[iterate_count_all - 6]
                         # 计算此代的最优值与前5代最优值之间的平方差
                         MSE = pow(best_objective_value[0] - best_obj_1, 2) + \
                               pow(best_objective_value[0] - best_obj_2, 2) + \
@@ -718,13 +735,22 @@ class GA:
 
             if not another_execute:
                 """结果输出"""
-                _, _, schedule_df, _ = self.decodeChromosome(best_chromosome[0])
-                project_end_time = schedule_df['End Time'].max()
+                schedule_df, schedule_df_for_cal, machine_first_start_time = self.decodeChromosome(best_chromosome[0])
+                best_energy_cost = self.cal.getEnergyCost(schedule_df_for_cal, machine_first_start_time)
+                best_labor_cost = self.cal.getLaborCost(schedule_df_for_cal)
+                best_piece_cost = self.cal.piece_cost
+                best_hold_cost = self.cal.getHoldCost(schedule_df)
+                best_delay_cost = self.cal.getDelayCost(schedule_df_for_cal)
 
-                self.resultExport(schedule_df, fitness_evolution, best_objective_value[0], project_end_time)
+                self.resultExport(schedule_df_for_cal, obj_evolution, cost_evolution, best_objective_value[0], best_end[0])
                 print(
                     "-----------------------------------------------------------------------------------------------------------")
                 print("最好目标值为：" + str(best_objective_value[0]))
-                print("完工时间为：" + str(project_end_time))
+                print("对应的能耗成本为：" + str(best_energy_cost))
+                print("对应的人工成本为：" + str(best_labor_cost))
+                print("对应的计件成本为：" + str(best_piece_cost))
+                print("对应的库存成本为：" + str(best_hold_cost))
+                print("对应的延迟成本为：" + str(best_delay_cost))
+                print("完工时间为：" + str(best_end[0]))
 
             execute_count += 1
