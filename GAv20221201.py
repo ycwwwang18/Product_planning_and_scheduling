@@ -649,6 +649,7 @@ class GA:
         execute_flag = True
         execute_count = 1
         iterate_count_all = 1  # 记录总的迭代次数
+        best_keep_num = self.best_keep_num
 
         #############初始化种群############
         while execute_flag:
@@ -667,13 +668,13 @@ class GA:
                     np.append(fitness_array, 1 / best_objective_value, axis=0),
                     np.append(project_end_time, best_end, axis=0),
                     np.append(cost_list, best_cost, axis=0),
-                    self.best_keep_num)
+                    best_keep_num)
             else:
                 best_chromosome, best_objective_value, best_end, best_cost = self.getBestChromosome(population,
                                                                                                     fitness_array,
                                                                                                     project_end_time,
                                                                                                     cost_list,
-                                                                                                    self.best_keep_num)
+                                                                                                    best_keep_num)
             print("第%s代：最优个体的目标值为：%s，项目结束时间为：%s" % (iterate_count, best_objective_value[0], best_end[0]))
             iterate_count += 1
 
@@ -683,14 +684,11 @@ class GA:
                     f"----------------------------------------------第{execute_count}次执行GA，第{iterate_count}代----------------------------------------------")
 
                 select_rate = self.select_rate - (iterate_count_all - 1) / 4 / self.evolution_num
+                best_keep_num = int(self.best_keep_num - iterate_count_all / (self.evolution_num / 20))
 
                 ######################交叉和变异#####################
                 crossover_population = self.crossOver(population)
-                mutation_start_time = time.time()
                 mutation_population = self.mutation(population, iterate_count)
-                mutation_end_time = time.time()
-                mutation_duration_time = (mutation_end_time-mutation_start_time) / 60
-                print(f"变异耗时{mutation_duration_time}分钟。")
                 offspring_population = np.vstack((crossover_population, mutation_population))
 
                 ####################种群适应度计算####################
@@ -702,7 +700,7 @@ class GA:
                     np.append(fitness_array, 1 / best_objective_value, axis=0),
                     np.append(project_end_time, best_end, axis=0),
                     np.append(cost_list, best_cost, axis=0),
-                    self.best_keep_num)
+                    best_keep_num)
                 # 记录本代的最优目标值
                 obj_evolution.append(best_objective_value[0])
                 cost_evolution.append(best_cost[0])
