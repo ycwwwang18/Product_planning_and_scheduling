@@ -1,5 +1,5 @@
 # 主运行函数
-from GAv20221122 import *
+from GAv20221201 import *
 from datav20221110 import *
 
 global population
@@ -9,7 +9,8 @@ global ga
 def dataPrepare(order_name, order_time, strategy, population_size, crossover_rate, mutation_rate,
                 select_rate, best_keep_num, evolution_num, mutation_change_point):
     """生成遗传算法对象前的数据准备"""
-    ga_data = getGa_data(order_name, order_time)
+    strategy_data = getStrategyData(order_name, order_time)
+    ga_data = GAData(strategy_data)
     global ga
     ga = GA(ga_data, strategy, population_size, crossover_rate, mutation_rate, select_rate, best_keep_num, evolution_num, mutation_change_point)
 
@@ -26,11 +27,11 @@ def run():
         crossover_rate = 0.7
         mutation_rate = 0.1
         select_rate = 0.8
-        best_keep_num = 50
+        best_keep_rate = 0.5
         mutation_change_point = 30
         evolution_num = 100
         dataPrepare(order_name, order_time, strategy, population_size, crossover_rate,
-                    mutation_rate, select_rate, best_keep_num, evolution_num, mutation_change_point)
+                    mutation_rate, select_rate, best_keep_rate, evolution_num, mutation_change_point)
         ga.execute()
 
 

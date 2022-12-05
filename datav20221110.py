@@ -13,17 +13,54 @@ def importGlobalData(data):
     DATA = data
 
 
-class Product:
+class Job:
     """
-    产品类：某个具体的单个产品，包含加工工序，加工机器，所属型号，所属类别
+    任务类：以类别为单位的任务或以型号为单位的加工任务
     属性不可任意修改
     """
 
-    def __init__(self, model_id):
-        self.category_id = DATA.category_to_model.loc[model_id, "产品类别"]  # 产品的类别编号
-        self.model_id = model_id  # 产品的型号编号
+    def __init__(self, category_id=0, model_id=0):
+        if category_id:
+            self.category_id = category_id
+            self.orders = self.getOrdersByCategory(category_id)  # 该任务的订单内容
+        else:
+            self.category_id = DATA.category_to_model.loc[model_id, "产品类别"]  # 产品的类别编号
+            self.model_id = model_id  # 产品的型号编号
+            self.orders = self.getOrdersByModel(model_id)
+        self.machines = DATA.machine_of_category[self.category_id - 1]
         self.procedures = DATA.procedure_of_category[self.category_id - 1]  # 包含的加工工序
-        self.machines = DATA.machine_of_category[self.category_id - 1]  # 各道工序的加工机器
+        self.procedure_num = len(self.procedures)
+        self.feasible_machines = DATA.machine_of_category[self.category_id - 1]  # 各道工序的可行加工机器
+        self.earliest_start_time = DATA.order_earliest_start_time
+        self.latest_end_time = self.earliest_start_time  # 任务的最近加工结束时间，外部可以修改，设置重置函数
+
+    def reset(self):
+        self.latest_end_time = self.earliest_start_time
+
+    @staticmethod
+    def getOrdersByCategory(category_id_):
+        """按照类别对订单进行捆绑处理"""
+        order_df = DATA.order_table[(DATA.order_table["产品类别"] == category_id_)]
+        model_id_set = set(order_df["产品型号"])
+        order_batches = pd.Series(index=model_id_set, dtype=object)
+        for model_id in model_id_set:
+            order_id_by_model = order_df[order_df["产品型号"] == model_id].index
+            order_list = []
+            for order_id in order_id_by_model:
+                order = Order(order_id)
+                order_list.append(order)
+            order_batches.loc[model_id] = order_list
+        return order_batches
+
+    @staticmethod
+    def getOrdersByModel(model_id_):
+        order_df = DATA.order_table[(DATA.order_table["产品型号"] == model_id_)]
+        order_id_by_model = order_df.index
+        order_list = []
+        for order_id in order_id_by_model:
+            order = Order(order_id)
+            order_list.append(order)
+        return order_list
 
 
 class CategoryProduct:
@@ -36,7 +73,6 @@ class CategoryProduct:
         self.category_id = category_id
         self.procedures = DATA.procedure_of_category[category_id - 1]
         self.machines = DATA.machine_of_category[category_id - 1]
-        self.procedures = DATA.procedure_of_category[category_id - 1]
         self.latest_end_time = 0  # 产品类别的最近的加工结束时间，外部可以修改，设置重置函数
 
 
@@ -58,8 +94,13 @@ class Machine:
         self.energy_consume_idle = DATA.machine_energy_consumption.loc[machine_id, "空转(开机等待)能耗/小时"]
         self.energy_consume_startup = DATA.machine_energy_consumption.loc[machine_id, "开机一次性能耗"]
         self.max_idle_time = DATA.machine_energy_consumption.loc[machine_id, "生产间隔时间超过则停机小时数"]
+        self.earliest_start_time = DATA.order_earliest_start_time
         self.first_start_time = 0  # 首次开机时间，外部可以修改的属性，设置重置函数
-        self.latest_end_time = 0  # 最近一次的加工结束时间，外部可以修改的属性，设置重置函数
+        self.latest_end_time = self.earliest_start_time  # 最近一次的加工结束时间，外部可以修改的属性，设置重置函数
+
+    def reset(self):
+        self.first_start_time = 0
+        self.latest_end_time = self.earliest_start_time
 
 
 class Order:
@@ -403,7 +444,8 @@ class CalculateUtils:
                     procedure_start_time = procedure_start_time.reset_index(drop=True)
                     procedure_end_time = procedure_end_time.reset_index(drop=True)
                     hold_time_before_this_procedure = procedure_start_time - procedure_end_time  # 计算各工序前的产品滞留时间
-                    hold_time_before_this_procedure = np.array(hold_time_before_this_procedure.map(lambda x: int(x.days)))  # 每满24h，算一天的库存成本
+                    hold_time_before_this_procedure = np.array(
+                        hold_time_before_this_procedure.map(lambda x: int(x.days)))  # 每满24h，算一天的库存成本
                     if len(total_hold_time_of_category) == 0:
                         total_hold_time_of_category = hold_time_before_this_procedure
                     else:
@@ -411,11 +453,12 @@ class CalculateUtils:
                 procedure_end_time = procedure_group['End Time'].map(self.toDatetime)
 
             procedure_end_time = procedure_end_time.reset_index(drop=True)
-            hold_time_before_delivery = procedure_end_time.map(lambda x: procedure_end_time.max()-x)  # 产品完工后到发货前的库存时间
+            hold_time_before_delivery = procedure_end_time.map(lambda x: procedure_end_time.max() - x)  # 产品完工后到发货前的库存时间
             hold_time_before_delivery = np.array(hold_time_before_delivery.map(lambda x: int(x.days)))
             total_hold_time_of_category += hold_time_before_delivery
             total_hold_time_of_category = total_hold_time_of_category.sum()
-            total_hold_cost += total_hold_time_of_category * self.DATA.cost_factor_for_category.loc[category_id, '仓储成本系数'] * self.price.hold_price  # 累加上该类别所有产品的库存成本
+            total_hold_cost += total_hold_time_of_category * self.DATA.cost_factor_for_category.loc[
+                category_id, '仓储成本系数'] * self.price.hold_price  # 累加上该类别所有产品的库存成本
 
         return total_hold_cost
 
@@ -458,92 +501,85 @@ class CalculateUtils:
         return new_time
 
 
-class GAData:
-    """遗传算法数据类"""
+class StrategyData:
+    """策略1：同类订单一起加工的数据准备"""
 
-    def __init__(self):
+    def __init__(self, job_strategy='', machine_strategy='', time_strategy=''):
         self.DATA = DATA
-        self.chromosome_size = sum(DATA.procedure_num_of_category)
-        self.category_list = list(set(DATA.order_table["产品类别"]))
-        self.job_num = len(self.category_list)
-        self.jobs = self.getJobs()
-        self.procedure_num = DATA.procedure_num_of_category
-        self.machine_num = DATA.machine_num
-        self.machine_list = DATA.machine_list
-        self.machines = self.getMachines()
-        self.order_id_list = list(DATA.order_table.index)
-        self.order_batches = self.getOrderBatches()
-        self.setJobMachineLatestEndTime()
+        """job"""
+        self.category_id_list = []
+        self.model_id_list = []
+        if job_strategy == 'category together':
+            self.category_id_list = list(set(DATA.order_table["产品类别"]))
+            self.job_id_list = self.category_id_list
+        elif job_strategy == 'model together':
+            self.model_id_list = list(set(DATA.order_table["产品型号"]))
+            self.job_id_list = self.model_id_list
+        self.job_num = len(self.job_id_list)
+        self.jobs = self.getJobs(self.category_id_list, self.model_id_list)
 
-    def getJobs(self):
-        """获取所有的任务对象"""
+        """machine"""
+        if not machine_strategy:
+            self.machine_num = DATA.machine_num
+            self.machine_id_list = DATA.machine_list
+            self.machines = self.getMachines()
+        elif machine_strategy == 'machine selection':
+            pass  # TODO：怎么进行设备选型的策略？ 对数据的组织方式进行了修改，对应遗传算法里的调用还没改完
+
+    @staticmethod
+    def getJobs(category_list, model_list):
         jobs = []
-        for category_id in self.category_list:
-            job = CategoryProduct(category_id)
-            jobs.append(job)
-        jobs = pd.Series(jobs)
-        jobs.index = self.category_list
+        if category_list:
+            for category_id in category_list:
+                job = Job(category_id=category_id)
+                jobs.append(job)
+            jobs = pd.Series(jobs)
+            jobs.index = category_list
+        else:
+            for model_id in model_list:
+                job = Job(model_id=model_id)
+                jobs.append(job)
+            jobs = pd.Series(jobs)
+            jobs.index = model_list
         return jobs
 
     def getMachines(self):
         """获取所有的机器对象"""
         machines = []
-        for machine_id in self.machine_list:
+        for machine_id in self.machine_id_list:
             machine = Machine(machine_id)
             machines.append(machine)
         machines = pd.Series(machines)
-        machines.index = self.machine_list
+        machines.index = self.machine_id_list
         return machines
 
-    def getOrderBatches(self):
-        """按照类别对订单进行捆绑处理"""
 
-        def getOrderByCategoryAndModel(category_id, model_id):
-            order_list = []
-            order_id_tuple = self.DATA.order_table[(self.DATA.order_table["产品类别"] == category_id) &
-                                                   (self.DATA.order_table["产品型号"] == model_id)
-                                                   ].index
-            for order_id in order_id_tuple:
-                order = Order(order_id)
-                order_list.append(order)
-            return order_list
+class GAData:
+    def __init__(self, strategy_data):
+        self.job_num = strategy_data.job_num
+        self.job_id_list = strategy_data.job_id_list
+        self.jobs = strategy_data.jobs
 
-        order_table_group = self.DATA.order_table.groupby(["产品类别", "产品型号"]).sum()
-        multi_index = order_table_group.index
-        order_batches = pd.Series(index=multi_index, dtype='object')
+        self.machine_num = strategy_data.machine_num
+        self.machine_id_list = strategy_data.machine_id_list
+        self.machines = strategy_data.machines
 
-        for x in multi_index:
-            this_category_id = x[0]
-            this_model_id = x[1]
-            order_batches.loc[this_category_id, this_model_id] = getOrderByCategoryAndModel(this_category_id,
-                                                                                            this_model_id)
-        return order_batches
+        self.chromosome_size = sum(map(lambda x: x.procedure_num, self.jobs))
 
-    def setJobMachineLatestEndTime(self):
-        """根据订单信息设置job的最早开始加工时间"""
-        for job in self.jobs:
-            job.latest_end_time = self.DATA.order_earliest_start_time
-
-        for machine in self.machines:
-            machine.latest_end_time = self.DATA.order_earliest_start_time
-
-    def resetMachine(self, machines):
+    @staticmethod
+    def resetMachine(machines):
         """每遍历一个个体，重置一次，否则这些属性值会进入下一次迭代"""
         for machine in machines:
-            machine.first_start_time = 0
-            try:
-                machine.latest_end_time = self.DATA.order_earliest_start_time
-            except AttributeError:
-                print(type(self.DATA))
+            machine.reset()
 
-    def resetJob(self, jobs):
+    @staticmethod
+    def resetJob(jobs):
         for job in jobs:
-            job.latest_end_time = self.DATA.order_earliest_start_time
+            job.reset()
 
 
-def getGa_data(order_name, order_time):
-    """生成遗传算法对象以及数据准备"""
+def getStrategyData(order_name, order_time):
     origin_data = Data("题目2.dataset-v2.xlsx", order_name, order_time)  # 对全局变量origin_data进行修改
     importGlobalData(origin_data)  # 把origin_data导入datav20221110模块，一次性的
-    ga_data = GAData()
-    return ga_data
+    strategy_data = StrategyData(job_strategy='category together')
+    return strategy_data
