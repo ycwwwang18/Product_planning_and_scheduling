@@ -1,28 +1,19 @@
 # 主运行函数
 from GAv20221201 import *
-from datav20221110 import *
-
-global population
-global ga
-
-
-def dataPrepare(order_name, order_time, strategy, population_size, crossover_rate, mutation_rate,
-                select_rate, best_keep_num, evolution_num, mutation_change_point):
-    """生成遗传算法对象前的数据准备"""
-    strategy_data = getStrategyData(order_name, order_time)
-    ga_data = GAData(strategy_data)
-    global ga
-    ga = GA(ga_data, strategy, population_size, crossover_rate, mutation_rate, select_rate, best_keep_num, evolution_num, mutation_change_point)
+from data import *
 
 
 def run():
     """遗传算法"""
-    order_name = "order1"
-    order_time = "2021-12-31"
-    strategy = 1
-    algorithm = "GA"
+    file_name = '题目2.dataset-v2.xlsx'
+    order_name = 'order1'
+    order_time = '2021-12-31'
+    job_strategy = 'category_together'
+    machine_strategy = 'machine_selection'
+    strategy_data = getStrategyData(file_name, order_name, order_time, job_strategy, machine_strategy)
+    algorithm = 'GA'
 
-    if algorithm == "GA":
+    if algorithm == 'GA':
         population_size = 100
         crossover_rate = 0.7
         mutation_rate = 0.1
@@ -30,8 +21,11 @@ def run():
         best_keep_rate = 0.5
         mutation_change_point = 30
         evolution_num = 100
-        dataPrepare(order_name, order_time, strategy, population_size, crossover_rate,
-                    mutation_rate, select_rate, best_keep_rate, evolution_num, mutation_change_point)
+
+        ga_data = GAData(strategy_data)
+        strategy = job_strategy + machine_strategy
+        ga = GA(ga_data, strategy, population_size, crossover_rate, mutation_rate, select_rate, best_keep_rate,
+                evolution_num, mutation_change_point)
         ga.execute()
 
 

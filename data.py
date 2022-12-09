@@ -1,4 +1,6 @@
 import copy
+from random import choice
+
 import numpy as np
 import pandas as pd
 from interval import IntervalSet
@@ -504,27 +506,54 @@ class CalculateUtils:
 class StrategyData:
     """策略1：同类订单一起加工的数据准备"""
 
-    def __init__(self, job_strategy='', machine_strategy='', time_strategy=''):
+    def __init__(self, job_strategy, machine_strategy):
         self.DATA = DATA
         """job"""
         self.category_id_list = []
         self.model_id_list = []
-        if job_strategy == 'category together':
+        if job_strategy == 'category_together':
             self.category_id_list = list(set(DATA.order_table["产品类别"]))
             self.job_id_list = self.category_id_list
-        elif job_strategy == 'model together':
+        elif job_strategy == 'model_together':
             self.model_id_list = list(set(DATA.order_table["产品型号"]))
             self.job_id_list = self.model_id_list
         self.job_num = len(self.job_id_list)
         self.jobs = self.getJobs(self.category_id_list, self.model_id_list)
 
         """machine"""
-        if not machine_strategy:
-            self.machine_num = DATA.machine_num
+        if machine_strategy == 'machine_selection':
+            self.machine_information = pd.concat([DATA.machine_information, DATA.machine_energy_consumption], axis=1)
+            self.procedure_id_list = DATA.machine_num_of_procedure.index.tolist()
+            self.machine_id_list = self.machineSelection()
+        else:
             self.machine_id_list = DATA.machine_list
-            self.machines = self.getMachines()
-        elif machine_strategy == 'machine selection':
-            pass  # TODO：怎么进行设备选型的策略？ 对数据的组织方式进行了修改，对应遗传算法里的调用还没改完
+        self.machine_num = len(self.machine_id_list)
+        self.machines = self.getMachines()
+
+    def machineSelection(self):
+        """按启发式规则生成初始解"""
+        # 保留每道工序的加工机器中能耗最小的机器
+        machine_id_list = []
+        quantile_energy_cost = self.machine_information.groupby("对应工序")[[
+            '空转(开机等待)能耗/小时', '生产能耗/小时', '开机一次性能耗']].quantile()
+        for procedure_id in self.procedure_id_list:
+            quantile_energy_consume_idle = quantile_energy_cost.loc[procedure_id, '空转(开机等待)能耗/小时']
+            quantile_energy_consume_produce = quantile_energy_cost.loc[procedure_id, '生产能耗/小时']
+            quantile_energy_consume_startup = quantile_energy_cost.loc[procedure_id, '开机一次性能耗']
+            keep_machine = list(self.machine_information[
+                                    (self.machine_information["对应工序"] == procedure_id) &
+                                    (self.machine_information[
+                                         "空转(开机等待)能耗/小时"] <= quantile_energy_consume_idle) &
+                                    (self.machine_information["生产能耗/小时"] <= quantile_energy_consume_produce) &
+                                    (self.machine_information["开机一次性能耗"] <= quantile_energy_consume_startup)
+                                    ].index)
+            machine_id_list.extend(keep_machine)
+        for job in self.jobs:  # 遍历所有的job
+            for procedure_machines in job.machines:  # 遍历该job的所有工序
+                if not set(procedure_machines).intersection(machine_id_list):  # 如果选择的设备不足以加工该job的此道工序
+                    machine_id_list.append(choice(procedure_machines))
+
+        return machine_id_list
 
     @staticmethod
     def getJobs(category_list, model_list):
@@ -578,8 +607,8 @@ class GAData:
             job.reset()
 
 
-def getStrategyData(order_name, order_time):
-    origin_data = Data("题目2.dataset-v2.xlsx", order_name, order_time)  # 对全局变量origin_data进行修改
+def getStrategyData(file_name, order_name, order_time, job_strategy='', machine_strategy=''):
+    origin_data = Data(file_name, order_name, order_time)  # 对全局变量origin_data进行修改
     importGlobalData(origin_data)  # 把origin_data导入datav20221110模块，一次性的
-    strategy_data = StrategyData(job_strategy='category together')
+    strategy_data = StrategyData(job_strategy, machine_strategy)
     return strategy_data

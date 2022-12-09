@@ -2,7 +2,7 @@ import os
 import json
 import sys
 import numpy as np
-from datav20221110 import *
+from data import *
 from multiprocess import *
 from pylab import *
 from copy import deepcopy

@@ -71,6 +71,7 @@ class Data:
             return category_list
 
         self.machine_information["对应产品类别"] = self.machine_information.对应产品类别.map(getFeasibleCategory)
+        self.machine_num_of_procedure = self.getMachineNumOfProcedure()
 
     '''辅助计算和处理'''
 
@@ -315,3 +316,5 @@ class Data:
         total_piece_cost = procedure_yield @ piece_cost_procedure
         return total_piece_cost
 
+    def getMachineNumOfProcedure(self):
+        return self.machine_information.groupby("对应工序")["对应产品类别"].count()
