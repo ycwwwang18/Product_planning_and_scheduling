@@ -10,7 +10,8 @@ def run():
     order_time = '2021-12-31'
     job_strategy = 'category_together'
     machine_strategy = 'machine_selection'
-    strategy_data = getStrategyData(file_name, order_name, order_time, job_strategy, machine_strategy)
+    time_strategy = 'no_work_at_night'
+    strategy_data = getStrategyData(file_name, order_name, order_time, job_strategy, machine_strategy, time_strategy)
     algorithm = 'GA'
 
     if algorithm == 'GA':
@@ -23,7 +24,7 @@ def run():
         evolution_num = 100
 
         ga_data = GAData(strategy_data)
-        strategy = job_strategy + machine_strategy
+        strategy = job_strategy + machine_strategy + time_strategy
         ga = GA(ga_data, strategy, population_size, crossover_rate, mutation_rate, select_rate, best_keep_rate,
                 evolution_num, mutation_change_point)
         ga.execute()
