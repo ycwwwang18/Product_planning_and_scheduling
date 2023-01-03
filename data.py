@@ -509,6 +509,8 @@ class StrategyData:
 
     def __init__(self, job_strategy, machine_strategy, time_strategy):
         self.DATA = DATA
+        self.machine_information = pd.concat([DATA.machine_information, DATA.machine_energy_consumption], axis=1)
+
         """job"""
         self.category_id_list = []
         self.model_id_list = []
@@ -523,7 +525,6 @@ class StrategyData:
 
         """machine"""
         if machine_strategy == 'machine_selection':
-            self.machine_information = pd.concat([DATA.machine_information, DATA.machine_energy_consumption], axis=1)
             self.procedure_id_list = DATA.machine_num_of_procedure.index.tolist()
             self.machine_id_list = self.machineSelection()
             print(f'采用设备选型策略，选择的设备为：{self.machine_id_list}。')

@@ -594,7 +594,7 @@ class GA:
         save_file = True
         obj_val = int(obj_val)
         end = end.strftime('%Y-%m-%d %H:%M')
-        folder_path = "C:\\Users\\ejauxue002\\Nutstore\\1\\Q2\\排程优化-20221010\\实验结果记录"
+        folder_path = "C:\\Users\\ejauxue002\\Nutstore\\1\\Q2\\实验结果记录"
         result_folder_path = folder_path + '\\' + self.file_name
         if os.path.exists(folder_path):
             save_file = True
