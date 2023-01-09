@@ -100,6 +100,7 @@ class Machine:
         self.first_start_time = 0  # 首次开机时间，外部可以修改的属性，设置重置函数
         self.latest_end_time = self.earliest_start_time  # 最近一次的加工结束时间，外部可以修改的属性，设置重置函数
         self.no_work_at_night = 0  # 该机器不在人工的夜班加工
+        self.work_at_night = 0  # 该机器只能在能耗的夜班加工
 
     def reset(self):
         self.first_start_time = 0
@@ -507,9 +508,11 @@ class CalculateUtils:
 class StrategyData:
     """策略1：同类订单一起加工的数据准备"""
 
-    def __init__(self, job_strategy, machine_strategy, time_strategy):
+    def __init__(self, job_strategy, machine_strategy, time_strategy, nwn_rate=0, wn_rate=0):
         self.DATA = DATA
         self.machine_information = pd.concat([DATA.machine_information, DATA.machine_energy_consumption], axis=1)
+        self.nwn_rate = nwn_rate  # no work at night rate
+        self.wn_rate = wn_rate  # work at night rate
 
         """job"""
         self.category_id_list = []
@@ -536,12 +539,14 @@ class StrategyData:
         """time"""
         if time_strategy == 'no_work_at_night':
             self.setNoWorkAtNight()
+            self.setWorkAtNight()
 
     def machineSelection(self):
         """按启发式规则生成初始解"""
         # 保留每道工序的加工机器中能耗最小的机器
         machine_id_list = []
-        mean_energy_cost = self.machine_information.groupby("对应工序")[['生产能耗/小时', '空转(开机等待)能耗/小时', '开机一次性能耗']].mean()
+        mean_energy_cost = self.machine_information.groupby("对应工序")[
+            ['生产能耗/小时', '空转(开机等待)能耗/小时', '开机一次性能耗']].mean()
         for procedure_id in self.procedure_id_list:
             mean_energy_consume_produce = mean_energy_cost.loc[procedure_id, '生产能耗/小时']
             mean_energy_consume_idle = mean_energy_cost.loc[procedure_id, '空转(开机等待)能耗/小时']
@@ -563,11 +568,22 @@ class StrategyData:
         return machine_id_list
 
     def setNoWorkAtNight(self):
-        machine_information = self.machine_information.loc[self.machine_id_list, :].sort_values(by='生产能耗/小时')
-        no_work_at_night_machine_ids = machine_information.iloc[:int(self.machine_num*0.1), :].index
-        print(f'不能在晚上生产的设备有：{no_work_at_night_machine_ids}')
+        """设置不能在晚上(00:00-08:00)生产的设备"""
+        machine_information = self.machine_information.loc[self.machine_id_list, :].sort_values(
+            by='生产能耗/小时')  # 按生产能耗从小到大排序
+        no_work_at_night_machine_ids = machine_information.iloc[:int(self.machine_num * self.nwn_rate), :].index  # 取生产能耗最小的前int(self.machine_num*0.1)台设备
+        print(f'不能在晚上(00:00-08:00)生产的设备有：{no_work_at_night_machine_ids}')
         for machine_id in no_work_at_night_machine_ids:
             self.machines.loc[machine_id].no_work_at_night = 1
+
+    def setWorkAtNight(self):
+        """设置只能在晚上(22:00-06:00)生产的设备"""
+        machine_information = self.machine_information.loc[self.machine_id_list, :].sort_values(by='生产能耗/小时',
+                                                                                                ascending=False)  # 按生产能耗从大到小排序
+        work_at_night_machine_ids = machine_information.iloc[:int(self.machine_num * self.wn_rate), :].index  # 取生产能耗最大的前int(self.machine_num*0.1)台设备
+        print(f'只能在晚上(22:00-06:00)生产的设备有：{work_at_night_machine_ids}')
+        for machine_id in work_at_night_machine_ids:
+            self.machines.loc[machine_id].work_at_night = 1
 
     @staticmethod
     def getJobs(category_list, model_list):
@@ -621,8 +637,8 @@ class GAData:
             job.reset()
 
 
-def getStrategyData(file_name, order_name, order_time, job_strategy='', machine_strategy='', time_strategy=''):
+def getStrategyData(file_name, order_name, order_time, job_strategy='', machine_strategy='', time_strategy='', nwn_rate=0, wn_rate=0):
     origin_data = Data(file_name, order_name, order_time)  # 对全局变量origin_data进行修改
     importGlobalData(origin_data)  # 把origin_data导入datav20221110模块，一次性的
-    strategy_data = StrategyData(job_strategy, machine_strategy, time_strategy)
+    strategy_data = StrategyData(job_strategy, machine_strategy, time_strategy, nwn_rate, wn_rate)
     return strategy_data
