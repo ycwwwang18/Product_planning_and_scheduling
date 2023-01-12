@@ -545,28 +545,38 @@ class GA:
             ax_labor.plot(x_value, y_labor)
             ax_hold.plot(x_value, y_hold)
             ax_delay.plot(x_value, y_delay)
-            ax_total.set_title("总成本")
-            ax_energy.set_title("能耗成本")
-            ax_labor.set_title("人工成本")
-            ax_hold.set_title("库存成本")
-            ax_delay.set_title("延迟成本")
-            plt.suptitle("成本迭代曲线")
-            ax_total.set_xlabel(u"迭代次数")
-            ax_total.set_ylabel(u"成本")
-            ax_energy.set_xlabel(u"迭代次数")
-            ax_energy.set_ylabel(u"成本")
-            ax_labor.set_xlabel(u"迭代次数")
-            ax_labor.set_ylabel(u"成本")
-            ax_hold.set_xlabel(u"迭代次数")
-            ax_hold.set_ylabel(u"成本")
-            ax_delay.set_xlabel(u"迭代次数")
-            ax_delay.set_ylabel(u"成本")
+            ax_total.set_title("总成本", fontsize=14)
+            ax_energy.set_title("能耗成本", fontsize=14)
+            ax_labor.set_title("人工成本", fontsize=14)
+            ax_hold.set_title("库存成本", fontsize=14)
+            ax_delay.set_title("延迟成本", fontsize=14)
+            plt.suptitle("成本迭代曲线", fontsize=14)
+            ax_total.tick_params(axis='x', labelsize=12)
+            ax_total.tick_params(axis='y', labelsize=12)
+            ax_total.set_xlabel(u"迭代次数", fontsize=14)
+            ax_total.set_ylabel(u"成本", fontsize=14)
+            ax_energy.tick_params(axis='x', labelsize=12)
+            ax_energy.tick_params(axis='y', labelsize=12)
+            ax_energy.set_xlabel(u"迭代次数", fontsize=14)
+            ax_energy.set_ylabel(u"成本", fontsize=14)
+            ax_labor.tick_params(axis='x', labelsize=12)
+            ax_labor.tick_params(axis='y', labelsize=12)
+            ax_labor.set_xlabel(u"迭代次数", fontsize=14)
+            ax_labor.set_ylabel(u"成本", fontsize=14)
+            ax_hold.tick_params(axis='x', labelsize=12)
+            ax_hold.tick_params(axis='y', labelsize=12)
+            ax_hold.set_xlabel(u"迭代次数", fontsize=14)
+            ax_hold.set_ylabel(u"成本", fontsize=14)
+            ax_delay.tick_params(axis='x', labelsize=12)
+            ax_delay.tick_params(axis='y', labelsize=12)
+            ax_delay.set_xlabel(u"迭代次数", fontsize=14)
+            ax_delay.set_ylabel(u"成本", fontsize=14)
             plt.rcParams['axes.unicode_minus'] = False
 
             # 先保存再show，否则保存的图片可能是空白的
             plt.tight_layout()
             if save_file:
-                plt.savefig(result_folder_path + '\\' + evolution_path, dpi=600)  # 算法、策略
+                plt.savefig(result_folder_path + '\\' + evolution_path, dpi=700)  # 算法、策略
             plt.show()
 
         def plotGantt():
@@ -588,7 +598,9 @@ class GA:
                                                   6: 'purple', 7: 'yellow', 8: 'pink', '空转': 'grey'},
                               hover_name='Order ID',
                               category_orders={'Machine': machine_name_list,
-                                               'Category ID': [1, 2, 3, 4, 5, 6, 7, 8, '空转']})
+                                               'Category ID': [1, 2, 3, 4, 5, 6, 7, 8, '空转']},
+                              labels={'Machine': '设备',
+                                      'Category ID': '产品类别'})
             fig.update_yaxes(showgrid=True, griddash='dash')
             fig.add_annotation(text=f'目标值：{obj_val}，完工时间：{end}',
                                align='left',
@@ -600,6 +612,7 @@ class GA:
                                y=1,
                                yanchor='bottom',
                                bgcolor='white')
+            fig.update_layout(font_size=16)
             if save_file:
                 fig.write_image(result_folder_path + '\\' + gantt_png_path, width=2000, height=1000)
                 plotly.offline.plot(fig, filename=result_folder_path + '\\' + gantt_html_path)
