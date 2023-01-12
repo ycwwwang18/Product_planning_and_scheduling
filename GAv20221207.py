@@ -642,8 +642,8 @@ class GA:
 
     def decodeChildTask(self, chromosome):
         """用于多进程解码的实现，个体的解码函数"""
-        print("\033[1;32m", "█", "\033[0m", sep="", end="")
         project_end_time, objective_value, costs = self.getObjectiveValue(chromosome)
+        print("\033[1;32m", "█", "\033[0m", sep="", end="")
         return project_end_time, 1 / objective_value, costs
 
     def multiprocessDecode(self, population, iterate_count):
@@ -657,8 +657,8 @@ class GA:
 
     def mutationChildTask(self, population, iterate_num):
         """用于多进程变异的实现，种群变异函数"""
-        print("\033[1;32m", "█", "\033[0m", sep="", end="")
         mutation_offspring = self.mutationOperator(population, iterate_num)
+        print("\033[1;32m", "█", "\033[0m", sep="", end="")
         return mutation_offspring
 
     def multiprocessMutation(self, population, iterate_count):

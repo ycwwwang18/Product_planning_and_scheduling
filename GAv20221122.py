@@ -233,13 +233,28 @@ class GA:
                     maintenance_end_time = maintenance_day1 + np.timedelta64(24, 'h')
                     order_start_time = maintenance_end_time  # 在维保期后才能开始生产
 
-                # 如果该机器只有在非夜班的时候才能生产
+                # 如果该机器只有在人工的非夜班的时候才能生产
                 if this_machine.no_work_at_night == 1:
                     try:
                         order_start_time = max(order_start_time, np.datetime64(str(order_start_time.astype(object).strftime('%Y-%m-%d'))+' 08:00'))
                     except AttributeError:
                         order_start_time = np.datetime64(order_start_time.strftime('%Y-%m-%d %H:%M:%S'))
                         order_start_time = max(order_start_time, np.datetime64(str(order_start_time.astype(object).strftime('%Y-%m-%d'))+' 08:00'))
+
+                # 如果该机器只有在能耗的夜班才能生产
+                if this_machine.work_at_night == 1:
+                    try:
+                        order_start_time = np.datetime64(order_start_time.strftime('%Y-%m-%d %H:%M:%S'))
+                    except AttributeError:
+                        pass
+                    if (order_start_time <= np.datetime64(
+                            order_start_time.astype(object).strftime('%Y-%m-%d') + ' 06:00')) & \
+                            (order_start_time >= np.datetime64(
+                                order_start_time.astype(object).strftime('%Y-%m-%d') + ' 22:00')):
+                        pass
+                    else:
+                        order_start_time = np.datetime64(
+                            order_start_time.astype(object).strftime('%Y-%m-%d') + ' 22:00')
 
                 # 该机器的第一次开机时间
                 if (is_first_job_of_machine == 1) & (model_index == 0) & (order_index == 0):
@@ -594,7 +609,7 @@ class GA:
         save_file = True
         obj_val = int(obj_val)
         end = end.strftime('%Y-%m-%d %H:%M')
-        folder_path = "C:\\Users\\ejauxue002\\Nutstore\\1\\Q2\\排程优化-20221010\\实验结果记录"
+        folder_path = "C:\\Users\\ejauxue002\\Nutstore\\1\\Q2\\实验结果记录"
         result_folder_path = folder_path + '\\' + self.file_name
         if os.path.exists(folder_path):
             save_file = True
@@ -614,8 +629,8 @@ class GA:
 
     def decodeChildTask(self, chromosome):
         """用于多进程解码的实现，个体的解码函数"""
-        print("\033[1;32m", "█", "\033[0m", sep="", end="")
         project_end_time, objective_value, costs = self.getObjectiveValue(chromosome)
+        print("\033[1;32m", "█", "\033[0m", sep="", end="")
         return project_end_time, 1 / objective_value, costs
 
     def multiprocessDecode(self, population, iterate_count):
@@ -629,8 +644,8 @@ class GA:
 
     def mutationChildTask(self, population, iterate_num):
         """用于多进程变异的实现，种群变异函数"""
-        print("\033[1;32m", "█", "\033[0m", sep="", end="")
         mutation_offspring = self.mutationOperator(population, iterate_num)
+        print("\033[1;32m", "█", "\033[0m", sep="", end="")
         return mutation_offspring
 
     def multiprocessMutation(self, population, iterate_count):
